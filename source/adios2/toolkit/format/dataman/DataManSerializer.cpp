@@ -29,6 +29,14 @@ DataManSerializer::DataManSerializer(helper::Comm const &comm,
     m_MpiSize = m_Comm.Size();
 }
 
+DataManSerializer::~DataManSerializer()
+{
+    if (m_PutPackThread.joinable())
+    {
+        m_PutPackThread.join();
+    }
+}
+
 void DataManSerializer::NewWriterBuffer(size_t bufferSize)
 {
     TAU_SCOPED_TIMER_FUNC();
@@ -249,11 +257,6 @@ VecPtr DataManSerializer::GetAggregatedMetadataPack(const int64_t stepRequested,
         }
     }
 
-    if (stepProvided > -1 and appID > -1)
-    {
-        ProtectStep(stepProvided, appID);
-    }
-
     return ret;
 }
 
@@ -274,7 +277,7 @@ void DataManSerializer::PutAggregatedMetadata(VecPtr input,
     if (input->size() > 0)
     {
         nlohmann::json metaJ = DeserializeJson(input->data(), input->size());
-        JsonToDataManVarMap(metaJ, nullptr);
+        JsonToVarMap(metaJ, nullptr);
 
         if (m_Verbosity >= 100)
         {
@@ -286,16 +289,15 @@ void DataManSerializer::PutAggregatedMetadata(VecPtr input,
 }
 
 bool DataManSerializer::IsCompressionAvailable(const std::string &method,
-                                               const std::string &type,
-                                               const Dims &count)
+                                               DataType type, const Dims &count)
 {
     TAU_SCOPED_TIMER_FUNC();
     if (method == "zfp")
     {
-        if (type == helper::GetType<int32_t>() ||
-            type == helper::GetType<int64_t>() ||
-            type == helper::GetType<float>() ||
-            type == helper::GetType<double>())
+        if (type == helper::GetDataType<int32_t>() ||
+            type == helper::GetDataType<int64_t>() ||
+            type == helper::GetDataType<float>() ||
+            type == helper::GetDataType<double>())
         {
             if (count.size() <= 3)
             {
@@ -305,8 +307,8 @@ bool DataManSerializer::IsCompressionAvailable(const std::string &method,
     }
     else if (method == "sz")
     {
-        if (type == helper::GetType<float>() ||
-            type == helper::GetType<double>())
+        if (type == helper::GetDataType<float>() ||
+            type == helper::GetDataType<double>())
         {
             if (count.size() <= 5)
             {
@@ -316,10 +318,10 @@ bool DataManSerializer::IsCompressionAvailable(const std::string &method,
     }
     else if (method == "bzip2")
     {
-        if (type == helper::GetType<int32_t>() ||
-            type == helper::GetType<int64_t>() ||
-            type == helper::GetType<float>() ||
-            type == helper::GetType<double>())
+        if (type == helper::GetDataType<int32_t>() ||
+            type == helper::GetDataType<int64_t>() ||
+            type == helper::GetDataType<float>() ||
+            type == helper::GetDataType<double>())
         {
             return true;
         }
@@ -335,12 +337,12 @@ void DataManSerializer::PutAttributes(core::IO &io)
     for (const auto &attributePair : attributesDataMap)
     {
         const std::string name(attributePair.first);
-        const std::string type(attributePair.second.first);
-        if (type == "unknown")
+        const DataType type(attributePair.second.first);
+        if (type == DataType::None)
         {
         }
 #define declare_type(T)                                                        \
-    else if (type == helper::GetType<T>())                                     \
+    else if (type == helper::GetDataType<T>())                                 \
     {                                                                          \
         core::Attribute<T> &attribute = *io.InquireAttribute<T>(name);         \
         PutAttribute(attribute);                                               \
@@ -373,12 +375,13 @@ void DataManSerializer::GetAttributes(core::IO &io)
     std::lock_guard<std::mutex> lStaticDataJson(m_StaticDataJsonMutex);
     for (const auto &staticVar : m_StaticDataJson["S"])
     {
-        const std::string type(staticVar["Y"].get<std::string>());
-        if (type == "")
+        const DataType type(
+            helper::GetDataTypeFromString(staticVar["Y"].get<std::string>()));
+        if (type == DataType::None)
         {
         }
 #define declare_type(T)                                                        \
-    else if (type == helper::GetType<T>())                                     \
+    else if (type == helper::GetDataType<T>())                                 \
     {                                                                          \
         const auto &attributesDataMap = io.GetAttributesDataMap();             \
         auto it = attributesDataMap.find(staticVar["N"].get<std::string>());   \
@@ -403,14 +406,14 @@ void DataManSerializer::GetAttributes(core::IO &io)
     }
 }
 
-void DataManSerializer::AttachAttributes()
+void DataManSerializer::AttachAttributesToLocalPack()
 {
     TAU_SCOPED_TIMER_FUNC();
     std::lock_guard<std::mutex> l1(m_StaticDataJsonMutex);
     m_MetadataJson["S"] = m_StaticDataJson["S"];
 }
 
-void DataManSerializer::JsonToDataManVarMap(nlohmann::json &metaJ, VecPtr pack)
+void DataManSerializer::JsonToVarMap(nlohmann::json &metaJ, VecPtr pack)
 {
     TAU_SCOPED_TIMER_FUNC();
 
@@ -457,13 +460,14 @@ void DataManSerializer::JsonToDataManVarMap(nlohmann::json &metaJ, VecPtr pack)
                     var.start = varBlock["O"].get<Dims>();
                     var.count = varBlock["C"].get<Dims>();
                     var.size = varBlock["I"].get<size_t>();
-                    var.type = varBlock["Y"].get<std::string>();
+                    var.type = helper::GetDataTypeFromString(
+                        varBlock["Y"].get<std::string>());
                     var.rank = stoi(rankMapIt.key());
                 }
                 catch (std::exception &e)
                 {
                     throw(std::runtime_error(
-                        "DataManSerializer::JsonToDataManVarMap missing "
+                        "DataManSerializer::JsonToVarMap missing "
                         "compulsory properties in JSON metadata"));
                 }
 
@@ -548,9 +552,8 @@ void DataManSerializer::JsonToDataManVarMap(nlohmann::json &metaJ, VecPtr pack)
     }
     if (m_Verbosity >= 5)
     {
-        std::cout
-            << "DataManSerializer::JsonToDataManVarMap Total buffered steps = "
-            << m_DataManVarMap.size() << ": ";
+        std::cout << "DataManSerializer::JsonToVarMap Total buffered steps = "
+                  << m_DataManVarMap.size() << ": ";
         for (const auto &i : m_DataManVarMap)
         {
             std::cout << i.first << ", ";
@@ -559,7 +562,24 @@ void DataManSerializer::JsonToDataManVarMap(nlohmann::json &metaJ, VecPtr pack)
     }
 }
 
-int DataManSerializer::PutPack(const VecPtr data)
+void DataManSerializer::PutPack(const VecPtr data, const bool useThread)
+{
+    if (useThread)
+    {
+        if (m_PutPackThread.joinable())
+        {
+            m_PutPackThread.join();
+        }
+        m_PutPackThread =
+            std::thread(&DataManSerializer::PutPackThread, this, data);
+    }
+    else
+    {
+        PutPackThread(data);
+    }
+}
+
+int DataManSerializer::PutPackThread(const VecPtr data)
 {
     TAU_SCOPED_TIMER_FUNC();
     if (data->size() == 0)
@@ -570,7 +590,7 @@ int DataManSerializer::PutPack(const VecPtr data)
         (reinterpret_cast<const uint64_t *>(data->data()))[0];
     uint64_t metaSize = (reinterpret_cast<const uint64_t *>(data->data()))[1];
     nlohmann::json j = DeserializeJson(data->data() + metaPosition, metaSize);
-    JsonToDataManVarMap(j, data);
+    JsonToVarMap(j, data);
     return 0;
 }
 
@@ -587,26 +607,16 @@ void DataManSerializer::Erase(const size_t step, const bool allPreviousSteps)
         {
             if (it->first <= step)
             {
-                if (not IsStepProtected(it->first))
-                {
-                    its.push_back(it);
-                }
-                else
-                {
-                    Log(5,
-                        "DataManSerializer::Erase() trying to erase step " +
-                            std::to_string(it->first) + ", but it is protected",
-                        true, true);
-                }
+                its.push_back(it);
             }
         }
         for (auto it : its)
         {
-            m_DataManVarMap.erase(it);
             Log(5,
-                "DataManSerializer::Erase() erased step " +
+                "DataManSerializer::Erase() erasing step " +
                     std::to_string(it->first),
                 true, true);
+            m_DataManVarMap.erase(it);
         }
         if (m_AggregatedMetadataJson != nullptr)
         {
@@ -616,10 +626,7 @@ void DataManSerializer::Erase(const size_t step, const bool allPreviousSteps)
             {
                 if (stoull(it.key()) < step)
                 {
-                    if (not IsStepProtected(stoull(it.key())))
-                    {
-                        jits.push_back(it);
-                    }
+                    jits.push_back(it);
                 }
             }
             for (auto it : jits)
@@ -630,24 +637,13 @@ void DataManSerializer::Erase(const size_t step, const bool allPreviousSteps)
     }
     else
     {
-        if (not IsStepProtected(step))
+        Log(5,
+            "DataManSerializer::Erase() erasing step " + std::to_string(step),
+            true, true);
+        m_DataManVarMap.erase(step);
+        if (m_AggregatedMetadataJson != nullptr)
         {
-            m_DataManVarMap.erase(step);
-            if (m_AggregatedMetadataJson != nullptr)
-            {
-                m_AggregatedMetadataJson.erase(std::to_string(step));
-            }
-            Log(5,
-                "DataManSerializer::Erase() erased step " +
-                    std::to_string(step),
-                true, true);
-        }
-        else
-        {
-            Log(5,
-                "DataManSerializer::Erase() trying to erase step " +
-                    std::to_string(step) + ", but it is protected",
-                true, true);
+            m_AggregatedMetadataJson.erase(std::to_string(step));
         }
     }
 }
@@ -848,22 +844,22 @@ VecPtr DataManSerializer::GenerateReply(
                 if (ovlp)
                 {
                     std::vector<char> tmpBuffer;
-                    if (var.type == "compound")
+                    if (var.type == DataType::Compound)
                     {
                         throw("Compound type is not supported yet.");
                     }
 #define declare_type(T)                                                        \
-    else if (var.type == helper::GetType<T>())                                 \
+    else if (var.type == helper::GetDataType<T>())                             \
     {                                                                          \
         tmpBuffer.reserve(std::accumulate(ovlpCount.begin(), ovlpCount.end(),  \
                                           sizeof(T),                           \
                                           std::multiplies<size_t>()));         \
-        GetVar(reinterpret_cast<T *>(tmpBuffer.data()), variable, ovlpStart,   \
-               ovlpCount, step);                                               \
-        PutVar(reinterpret_cast<T *>(tmpBuffer.data()), variable, var.shape,   \
-               ovlpStart, ovlpCount, ovlpStart, ovlpCount, var.doid, step,     \
-               var.rank, var.address, compressionParamsVar, replyLocalBuffer,  \
-               replyMetaJ);                                                    \
+        GetData(reinterpret_cast<T *>(tmpBuffer.data()), variable, ovlpStart,  \
+                ovlpCount, step);                                              \
+        PutData(reinterpret_cast<T *>(tmpBuffer.data()), variable, var.shape,  \
+                ovlpStart, ovlpCount, ovlpStart, ovlpCount, var.doid, step,    \
+                var.rank, var.address, compressionParamsVar, replyLocalBuffer, \
+                replyMetaJ);                                                   \
     }
                     ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
 #undef declare_type
@@ -951,23 +947,6 @@ bool DataManSerializer::CalculateOverlap(const Dims &inStart,
     return true;
 }
 
-/*
-size_t DataManSerializer::MinStep()
-{
-    TAU_SCOPED_TIMER_FUNC();
-    std::lock_guard<std::mutex> l(m_DataManVarMapMutex);
-    size_t minStep = std::numeric_limits<size_t>::max();
-    for (const auto &i : m_DataManVarMap)
-    {
-        if (minStep > i.first)
-        {
-            minStep = i.first;
-        }
-    }
-    return minStep;
-}
-*/
-
 size_t DataManSerializer::LocalBufferSize() { return m_LocalBuffer->size(); }
 
 VecPtr DataManSerializer::SerializeJson(const nlohmann::json &message)
@@ -1049,49 +1028,6 @@ nlohmann::json DataManSerializer::DeserializeJson(const char *start,
     }
 
     return message;
-}
-
-void DataManSerializer::ProtectStep(const int64_t step, const int64_t id)
-{
-    TAU_SCOPED_TIMER_FUNC();
-    std::lock_guard<std::mutex> l(m_ProtectedStepsMutex);
-    m_ProtectedStepsToAggregate[id].push_back(step);
-    auto &idVec = m_ProtectedStepsToAggregate[id];
-    while (idVec.size() > 3)
-    {
-        idVec.erase(idVec.begin());
-    }
-    if (m_Verbosity >= 5)
-    {
-        std::cout << "Rank ";
-        std::cout << m_MpiRank;
-        std::cout << " Step ";
-        std::cout << step;
-        std::cout << " is protected for App ";
-        std::cout << id;
-        std::cout << ". All protected steps to be aggregated are: ";
-        for (auto i : m_ProtectedStepsToAggregate[id])
-        {
-            std::cout << i << ", ";
-        }
-        std::cout << std::endl;
-    }
-}
-
-bool DataManSerializer::IsStepProtected(const int64_t step)
-{
-    TAU_SCOPED_TIMER_FUNC();
-    std::lock_guard<std::mutex> l(m_ProtectedStepsMutex);
-    bool ret = false;
-    for (const auto &stepVecPair : m_ProtectedStepsAggregated)
-    {
-        for (const auto &stepProtected : stepVecPair.second)
-            if (stepProtected == step)
-            {
-                ret = true;
-            }
-    }
-    return ret;
 }
 
 void DataManSerializer::SetDestination(const std::string &dest)

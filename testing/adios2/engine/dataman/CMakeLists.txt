@@ -3,12 +3,16 @@
 # accompanying file Copyright.txt for details.
 #------------------------------------------------------------------------------#
 
-if(ADIOS2_HAVE_MPI)
-  gtest_add_tests_helper(P2P2DMemSelect NOEXEC DataMan Engine.DataMan. "")
-  gtest_add_tests_helper(P2P3DMemSelect NOEXEC DataMan Engine.DataMan. "")
-  gtest_add_tests_helper(P2P1D NOEXEC DataMan Engine.DataMan. "")
-  gtest_add_tests_helper(P2PZfp2D NOEXEC DataMan Engine.DataMan. "")
-  gtest_add_tests_helper(P2PSz2D NOEXEC DataMan Engine.DataMan. "")
-  gtest_add_tests_helper(Subscribe1D NOEXEC DataMan Engine.DataMan. "")
-  gtest_add_tests_helper(MpiBase TRUE DataMan Engine.DataMan. "")
-endif()
+foreach(tst IN ITEMS
+  1D
+  2DMemSelect 3DMemSelect
+  WriterDoubleBuffer WriterSingleBuffer
+  ReaderDoubleBuffer ReaderSingleBuffer
+  # Reliable
+  )
+  gtest_add_tests_helper(${tst} MPI_NONE DataMan Engine.DataMan. "")
+  set_tests_properties(${Test.Engine.DataMan.${tst}-TESTS}
+    PROPERTIES RUN_SERIAL TRUE
+  )
+endforeach()
+

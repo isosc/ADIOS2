@@ -28,7 +28,7 @@ class FileFStream : public Transport
 {
 
 public:
-    FileFStream(helper::Comm const &comm, const bool debugMode);
+    FileFStream(helper::Comm const &comm);
 
     ~FileFStream() = default;
 
@@ -46,6 +46,8 @@ public:
     void Flush() final;
 
     void Close() final;
+
+    void Delete() final;
 
     void SeekToEnd() final;
 

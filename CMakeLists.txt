@@ -14,7 +14,7 @@ endif()
 
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/ADIOSFunctions.cmake)
 
-setup_version(2.5.0)
+setup_version(2.6.0)
 
 project(ADIOS2 VERSION ${ADIOS2_VERSION})
 
@@ -78,6 +78,14 @@ if(NOT MSVC)
   set(CMAKE_C_STANDARD_REQUIRED True)
 endif()
 
+# Option for packagers to add a suffix after "adios" in library names (to
+# install multiple builds in parallel)
+set(ADIOS2_LIBRARY_SUFFIX "" CACHE STRING
+  "Suffix to put after \"adios\" in library names")
+set(ADIOS2_EXECUTABLE_SUFFIX "${ADIOS2_LIBRARY_SUFFIX}" CACHE STRING
+  "Suffix to append to executable names")
+mark_as_advanced(ADIOS2_LIBRARY_SUFFIX ADIOS2_EXECUTABLE_SUFFIX)
+
 # Use meta-compile features if available, otherwise use specific language
 # features
 if(CMAKE_VERSION VERSION_LESS 3.9 OR
@@ -122,6 +130,7 @@ adios_option(Table     "Enable support for Table" AUTO)
 adios_option(SST       "Enable support for SST" AUTO)
 adios_option(ZeroMQ    "Enable support for ZeroMQ" AUTO)
 adios_option(HDF5      "Enable support for the HDF5 engine" AUTO)
+adios_option(IME       "Enable support for DDN IME transport" AUTO)
 adios_option(Python    "Enable support for Python bindings" AUTO)
 adios_option(Fortran   "Enable support for Fortran bindings" AUTO)
 adios_option(SysVShMem "Enable support for SysV Shared Memory IPC on *NIX" AUTO)
@@ -140,7 +149,7 @@ if(ADIOS2_HAVE_MPI)
 endif()
 
 set(ADIOS2_CONFIG_OPTS
-    Blosc BZip2 ZFP SZ MGARD PNG MPI DataMan Table SSC SST DataSpaces ZeroMQ HDF5 Python Fortran SysVShMem Profiling Endian_Reverse
+    Blosc BZip2 ZFP SZ MGARD PNG MPI DataMan Table SSC SST DataSpaces ZeroMQ HDF5 IME Python Fortran SysVShMem Profiling Endian_Reverse
 )
 GenerateADIOSHeaderConfig(${ADIOS2_CONFIG_OPTS})
 configure_file(
@@ -151,6 +160,7 @@ configure_file(
 
 install(FILES ${PROJECT_BINARY_DIR}/source/adios2/common/ADIOSConfig.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/adios2/common
+  COMPONENT adios2_core-development
 )
 
 #------------------------------------------------------------------------------#
@@ -221,8 +231,13 @@ else()
 endif()
 unset(BUILD_TESTING)
 option(ADIOS2_BUILD_TESTING "Build the ADIOS2 testing tree" 
-       ${ADIOS2_BUILD_TESTING_DEFAULT})
-       
+  ${ADIOS2_BUILD_TESTING_DEFAULT})
+
+cmake_dependent_option(ADIOS2_RUN_MPI_MPMD_TESTS
+  "Enable the parallel MPMD tests" ON
+  "ADIOS2_BUILD_TESTING;ADIOS2_HAVE_MPI" OFF)
+mark_as_advanced(ADIOS2_RUN_MPMD_TESTS)
+
 include(CTest)
 set(BUILD_TESTING ${ADIOS2_BUILD_TESTING})
 if(BUILD_TESTING)
@@ -279,7 +294,7 @@ message("        bin: ${CMAKE_INSTALL_BINDIR}")
 message("        lib: ${CMAKE_INSTALL_LIBDIR}")
 message("    include: ${CMAKE_INSTALL_INCLUDEDIR}")
 message("      cmake: ${CMAKE_INSTALL_CMAKEDIR}")
-if(ADIOS2_HAVE_Python)
+if(DEFINED CMAKE_INSTALL_PYTHONDIR)
   message("     python: ${CMAKE_INSTALL_PYTHONDIR}")
 endif()
 message("")

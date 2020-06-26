@@ -24,8 +24,8 @@ struct NullTransport::NullTransportImpl
     size_t Capacity = 0;
 };
 
-NullTransport::NullTransport(helper::Comm const &comm, const bool debugMode)
-: Transport("NULL", "NULL", comm, debugMode), Impl(new NullTransportImpl)
+NullTransport::NullTransport(helper::Comm const &comm)
+: Transport("NULL", "NULL", comm), Impl(new NullTransportImpl)
 {
 }
 
@@ -108,6 +108,8 @@ void NullTransport::Close()
     Impl->Capacity = 0;
     Impl->IsOpen = false;
 }
+
+void NullTransport::Delete() { Close(); }
 
 void NullTransport::SeekToEnd()
 {

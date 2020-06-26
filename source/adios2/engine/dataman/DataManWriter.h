@@ -11,7 +11,11 @@
 #ifndef ADIOS2_ENGINE_DATAMAN_DATAMANWRITER_H_
 #define ADIOS2_ENGINE_DATAMAN_DATAMANWRITER_H_
 
-#include "DataManCommon.h"
+#include "DataManMonitor.h"
+#include "adios2/core/Engine.h"
+#include "adios2/toolkit/format/dataman/DataManSerializer.tcc"
+#include "adios2/toolkit/zmq/zmqpubsub/ZmqPubSub.h"
+#include "adios2/toolkit/zmq/zmqreqrep/ZmqReqRep.h"
 
 namespace adios2
 {
@@ -20,7 +24,7 @@ namespace core
 namespace engine
 {
 
-class DataManWriter : public DataManCommon
+class DataManWriter : public Engine
 {
 
 public:
@@ -36,14 +40,43 @@ public:
     void Flush(const int transportIndex = -1) final;
 
 private:
-    std::string m_DataAddress;
-    std::string m_ControlAddress;
+    std::string m_IPAddress;
+    int m_Port = 50001;
+    int m_RendezvousReaderCount = 1;
+    int m_Timeout = 5;
+    int m_Verbosity = 0;
+    bool m_DoubleBuffer = false;
+    std::string m_TransportMode = "fast";
+    bool m_MonitorActive = false;
+
     std::string m_AllAddresses;
+    std::string m_PublisherAddress;
+    std::string m_ReplierAddress;
+    int m_MpiRank;
+    int m_MpiSize;
+    int64_t m_CurrentStep = -1;
+    size_t m_SerializerBufferSize = 1024 * 1024;
 
-    adios2::zmq::ZmqPubSub m_DataPublisher;
+    format::DataManSerializer m_Serializer;
 
-    void ReplyThread(const std::string &address);
+    zmq::ZmqPubSub m_Publisher;
+    zmq::ZmqReqRep m_Replier;
+
+    DataManMonitor m_Monitor;
+
     std::thread m_ReplyThread;
+    std::thread m_PublishThread;
+    bool m_ReplyThreadActive = true;
+    bool m_PublishThreadActive = true;
+
+    std::queue<std::shared_ptr<std::vector<char>>> m_BufferQueue;
+    std::mutex m_BufferQueueMutex;
+
+    void PushBufferQueue(std::shared_ptr<std::vector<char>> buffer);
+    std::shared_ptr<std::vector<char>> PopBufferQueue();
+
+    void ReplyThread();
+    void PublishThread();
 
 #define declare_type(T)                                                        \
     void DoPutSync(Variable<T> &, const T *) final;                            \

@@ -15,12 +15,7 @@
 #include <iostream>
 
 #include "adios2/common/ADIOSMacros.h"
-#include "adios2/helper/adiosCommDummy.h"
 #include "adios2/helper/adiosFunctions.h"
-
-#ifdef ADIOS2_HAVE_MPI
-#include "adios2/helper/adiosCommMPI.h"
-#endif
 
 #include "py11types.h"
 
@@ -28,25 +23,6 @@ namespace adios2
 {
 namespace py11
 {
-
-#ifdef ADIOS2_HAVE_MPI
-File::File(const std::string &name, const std::string mode, MPI_Comm comm,
-           const std::string engineType)
-: m_Name(name), m_Mode(mode),
-  m_Stream(std::make_shared<core::Stream>(
-      name, ToMode(mode), helper::CommDupMPI(comm), engineType, "Python"))
-{
-}
-
-File::File(const std::string &name, const std::string mode, MPI_Comm comm,
-           const std::string &configFile, const std::string ioInConfigFile)
-: m_Name(name), m_Mode(mode),
-  m_Stream(std::make_shared<core::Stream>(name, ToMode(mode),
-                                          helper::CommDupMPI(comm), configFile,
-                                          ioInConfigFile, "Python"))
-{
-}
-#endif
 
 File::File(const std::string &name, const std::string mode,
            const std::string engineType)
@@ -78,9 +54,11 @@ size_t File::AddTransport(const std::string type, const Params &parameters)
     return m_Stream->m_IO->AddTransport(type, parameters);
 }
 
-std::map<std::string, adios2::Params> File::AvailableVariables() noexcept
+std::map<std::string, adios2::Params>
+File::AvailableVariables(const std::vector<std::string> &keys) noexcept
 {
-    return m_Stream->m_IO->GetAvailableVariables();
+    const std::set<std::string> keysSet = helper::VectorToSet(keys);
+    return m_Stream->m_IO->GetAvailableVariables(keysSet);
 }
 
 std::map<std::string, adios2::Params> File::AvailableAttributes() noexcept
@@ -230,9 +208,9 @@ pybind11::array File::Read(const std::string &name, const size_t blockID)
 pybind11::array File::Read(const std::string &name, const Dims &start,
                            const Dims &count, const size_t blockID)
 {
-    const std::string type = m_Stream->m_IO->InquireVariableType(name);
+    const DataType type = m_Stream->m_IO->InquireVariableType(name);
 
-    if (type == helper::GetType<std::string>())
+    if (type == helper::GetDataType<std::string>())
     {
         const std::string value =
             m_Stream->Read<std::string>(name, blockID).front();
@@ -248,13 +226,13 @@ pybind11::array File::Read(const std::string &name, const Dims &start,
                            const Dims &count, const size_t stepStart,
                            const size_t stepCount, const size_t blockID)
 {
-    const std::string type = m_Stream->m_IO->InquireVariableType(name);
+    const DataType type = m_Stream->m_IO->InquireVariableType(name);
 
-    if (type.empty())
+    if (type == DataType::None)
     {
     }
 #define declare_type(T)                                                        \
-    else if (type == helper::GetType<T>())                                     \
+    else if (type == helper::GetDataType<T>())                                 \
     {                                                                          \
         return DoRead<T>(name, start, count, stepStart, stepCount, blockID);   \
     }
@@ -273,14 +251,14 @@ pybind11::array File::ReadAttribute(const std::string &name,
                                     const std::string &variableName,
                                     const std::string separator)
 {
-    const std::string type =
+    const DataType type =
         m_Stream->m_IO->InquireAttributeType(name, variableName, separator);
 
-    if (type.empty())
+    if (type == DataType::None)
     {
     }
 #define declare_type(T)                                                        \
-    else if (type == helper::GetType<T>())                                     \
+    else if (type == helper::GetDataType<T>())                                 \
     {                                                                          \
         core::Attribute<T> *attribute = m_Stream->m_IO->InquireAttribute<T>(   \
             name, variableName, separator);                                    \

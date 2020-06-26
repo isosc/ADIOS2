@@ -56,6 +56,15 @@ void Comm::GathervArrays(const T *source, size_t sourceCount,
     if (rankDestination == this->Rank())
     {
         displs = GetGathervDisplacements(counts, countsSize);
+        const size_t totalElements =
+            displs[countsSize - 1] + counts[countsSize - 1];
+        if (totalElements > 2147483648)
+        {
+            std::runtime_error(
+                "ERROR: GathervArrays does not support gathering more than "
+                "2^31 elements. Here it was tasked with " +
+                std::to_string(totalElements) + " elements\n");
+        }
     }
     this->Gatherv(source, sourceCount, destination, counts, displs.data(),
                   rankDestination);
@@ -63,8 +72,7 @@ void Comm::GathervArrays(const T *source, size_t sourceCount,
 
 template <class T>
 void Comm::GathervVectors(const std::vector<T> &in, std::vector<T> &out,
-                          size_t &position, int rankDestination,
-                          size_t extraSize) const
+                          size_t &position, int rankDestination) const
 {
     const size_t inSize = in.size();
     const std::vector<size_t> counts =
@@ -81,8 +89,8 @@ void Comm::GathervVectors(const std::vector<T> &in, std::vector<T> &out,
         const size_t newSize = position + gatheredSize;
         try
         {
-            out.reserve(newSize + extraSize); // to avoid power of 2 growth
-            out.resize(newSize + extraSize);
+            out.reserve(newSize); // to avoid power of 2 growth
+            out.resize(newSize);
         }
         catch (...)
         {
@@ -94,7 +102,7 @@ void Comm::GathervVectors(const std::vector<T> &in, std::vector<T> &out,
     }
 
     this->GathervArrays(in.data(), in.size(), counts.data(), counts.size(),
-                        out.data() + position);
+                        out.data() + position, rankDestination);
     position += gatheredSize;
 }
 

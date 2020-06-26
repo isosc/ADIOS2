@@ -27,8 +27,7 @@ TableWriter::TableWriter(IO &io, const std::string &name, const Mode mode,
                          helper::Comm comm)
 : Engine("TableWriter", io, name, mode, std::move(comm)),
   m_IsRowMajor(helper::IsRowMajor(m_IO.m_HostLanguage)),
-  m_Deserializer(m_Comm, m_IsRowMajor),
-  m_SubAdios(m_Comm.World(), adios2::DebugOFF, "C++"),
+  m_Deserializer(m_Comm, m_IsRowMajor), m_SubAdios(m_Comm.World(), "C++"),
   m_SubIO(m_SubAdios.DeclareIO("SubIO"))
 {
     m_MpiRank = m_Comm.Rank();
@@ -88,7 +87,7 @@ void TableWriter::EndStep()
         else
         {
             auto localPack = serializer->GetLocalPack();
-            m_Deserializer.PutPack(localPack);
+            m_Deserializer.PutPack(localPack, false);
             PutAggregatorBuffer();
         }
     }
@@ -126,7 +125,7 @@ void TableWriter::ReplyThread()
             }
             continue;
         }
-        m_Deserializer.PutPack(request);
+        m_Deserializer.PutPack(request, false);
         format::VecPtr reply = std::make_shared<std::vector<char>>(1, 'K');
         replier.SendReply(reply);
         if (m_Verbosity >= 1)
@@ -288,11 +287,11 @@ void TableWriter::PutAggregatorBuffer()
         m_VarInfoMap[v.name].type = v.type;
         m_VarInfoMap[v.name].shape = v.shape;
         size_t elementSize;
-        if (v.type == "")
+        if (v.type == DataType::None)
         {
         }
 #define declare_type(T)                                                        \
-    else if (v.type == helper::GetType<T>()) { elementSize = sizeof(T); }
+    else if (v.type == helper::GetDataType<T>()) { elementSize = sizeof(T); }
         ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
 #undef declare_type
 
@@ -321,11 +320,11 @@ void TableWriter::PutAggregatorBuffer()
                 }
             }
 
-            if (v.type == "")
+            if (v.type == DataType::None)
             {
             }
 #define declare_type(T)                                                        \
-    else if (v.type == helper::GetType<T>())                                   \
+    else if (v.type == helper::GetDataType<T>())                               \
     {                                                                          \
         helper::NdCopy<T>(                                                     \
             v.buffer->data() + v.position, v.start, v.count, true, true,       \
@@ -377,12 +376,12 @@ void TableWriter::PutSubEngine(bool finalPut)
                 {
                     count[0] = shape[0] - start[0];
                 }
-                const std::string &type = m_VarInfoMap[varPair.first].type;
-                if (type == "")
+                const DataType type = m_VarInfoMap[varPair.first].type;
+                if (type == DataType::None)
                 {
                 }
 #define declare_type(T)                                                        \
-    else if (type == helper::GetType<T>())                                     \
+    else if (type == helper::GetDataType<T>())                                 \
     {                                                                          \
         auto variable = m_SubIO.InquireVariable<T>(varPair.first);             \
         if (not variable)                                                      \

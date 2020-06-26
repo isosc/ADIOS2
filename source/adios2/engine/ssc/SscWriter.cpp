@@ -11,8 +11,7 @@
 #include "SscWriter.tcc"
 #include "adios2/helper/adiosComm.h"
 #include "adios2/helper/adiosCommMPI.h"
-#include "adios2/helper/adiosJSONcomplex.h"
-#include "nlohmann/json.hpp"
+#include "adios2/helper/adiosString.h"
 
 namespace adios2
 {
@@ -27,15 +26,16 @@ SscWriter::SscWriter(IO &io, const std::string &name, const Mode mode,
 {
     TAU_SCOPED_TIMER_FUNC();
 
-    ssc::GetParameter(m_IO.m_Parameters, "MpiMode", m_MpiMode);
-    ssc::GetParameter(m_IO.m_Parameters, "Verbose", m_Verbosity);
-    ssc::GetParameter(m_IO.m_Parameters, "MaxFilenameLength",
-                      m_MaxFilenameLength);
-    ssc::GetParameter(m_IO.m_Parameters, "RendezvousAppCount",
-                      m_RendezvousAppCount);
-    ssc::GetParameter(m_IO.m_Parameters, "MaxStreamsPerApp",
-                      m_MaxStreamsPerApp);
-    ssc::GetParameter(m_IO.m_Parameters, "OpenTimeoutSecs", m_OpenTimeoutSecs);
+    helper::GetParameter(m_IO.m_Parameters, "MpiMode", m_MpiMode);
+    helper::GetParameter(m_IO.m_Parameters, "Verbose", m_Verbosity);
+    helper::GetParameter(m_IO.m_Parameters, "MaxFilenameLength",
+                         m_MaxFilenameLength);
+    helper::GetParameter(m_IO.m_Parameters, "RendezvousAppCount",
+                         m_RendezvousAppCount);
+    helper::GetParameter(m_IO.m_Parameters, "MaxStreamsPerApp",
+                         m_MaxStreamsPerApp);
+    helper::GetParameter(m_IO.m_Parameters, "OpenTimeoutSecs",
+                         m_OpenTimeoutSecs);
 
     m_Buffer.resize(1);
 
@@ -52,6 +52,8 @@ SscWriter::SscWriter(IO &io, const std::string &name, const Mode mode,
 StepStatus SscWriter::BeginStep(StepMode mode, const float timeoutSeconds)
 {
     TAU_SCOPED_TIMER_FUNC();
+
+    MpiWait();
 
     if (m_InitialStep)
     {
@@ -89,7 +91,7 @@ void SscWriter::PutOneSidedPostPush()
         MPI_Put(m_Buffer.data(), m_Buffer.size(), MPI_CHAR, i.first,
                 i.second.first, m_Buffer.size(), MPI_CHAR, m_MpiWin);
     }
-    MPI_Win_complete(m_MpiWin);
+    m_NeedWait = true;
 }
 
 void SscWriter::PutOneSidedFencePush()
@@ -101,35 +103,33 @@ void SscWriter::PutOneSidedFencePush()
         MPI_Put(m_Buffer.data(), m_Buffer.size(), MPI_CHAR, i.first,
                 i.second.first, m_Buffer.size(), MPI_CHAR, m_MpiWin);
     }
-    MPI_Win_fence(0, m_MpiWin);
+    m_NeedWait = true;
 }
 
 void SscWriter::PutOneSidedPostPull()
 {
     TAU_SCOPED_TIMER_FUNC();
     MPI_Win_post(m_MpiAllReadersGroup, 0, m_MpiWin);
-    MPI_Win_wait(m_MpiWin);
+    m_NeedWait = true;
 }
 
 void SscWriter::PutOneSidedFencePull()
 {
     TAU_SCOPED_TIMER_FUNC();
     MPI_Win_fence(0, m_MpiWin);
-    MPI_Win_fence(0, m_MpiWin);
+    m_NeedWait = true;
 }
 
 void SscWriter::PutTwoSided()
 {
     TAU_SCOPED_TIMER_FUNC();
-    std::vector<MPI_Request> requests;
     for (const auto &i : m_AllSendingReaderRanks)
     {
-        requests.emplace_back();
+        m_MpiRequests.emplace_back();
         MPI_Isend(m_Buffer.data(), m_Buffer.size(), MPI_CHAR, i.first, 0,
-                  m_StreamComm, &requests.back());
+                  m_StreamComm, &m_MpiRequests.back());
     }
-    MPI_Status statuses[requests.size()];
-    MPI_Waitall(requests.size(), requests.data(), statuses);
+    m_NeedWait = true;
 }
 
 void SscWriter::EndStep()
@@ -147,7 +147,8 @@ void SscWriter::EndStep()
         SyncWritePattern();
         MPI_Win_create(m_Buffer.data(), m_Buffer.size(), 1, MPI_INFO_NULL,
                        m_StreamComm, &m_MpiWin);
-        PutOneSidedPostPull();
+        MPI_Win_post(m_MpiAllReadersGroup, 0, m_MpiWin);
+        MPI_Win_wait(m_MpiWin);
         MPI_Win_free(&m_MpiWin);
         SyncReadPattern();
         MPI_Win_create(m_Buffer.data(), m_Buffer.size(), 1, MPI_INFO_NULL,
@@ -155,23 +156,23 @@ void SscWriter::EndStep()
     }
     else
     {
-        if (m_MpiMode == "TwoSided")
+        if (m_MpiMode == "twosided")
         {
             PutTwoSided();
         }
-        else if (m_MpiMode == "OneSidedFencePush")
+        else if (m_MpiMode == "onesidedfencepush")
         {
             PutOneSidedFencePush();
         }
-        else if (m_MpiMode == "OneSidedPostPush")
+        else if (m_MpiMode == "onesidedpostpush")
         {
             PutOneSidedPostPush();
         }
-        else if (m_MpiMode == "OneSidedFencePull")
+        else if (m_MpiMode == "onesidedfencepull")
         {
             PutOneSidedFencePull();
         }
-        else if (m_MpiMode == "OneSidedPostPull")
+        else if (m_MpiMode == "onesidedpostpull")
         {
             PutOneSidedPostPull();
         }
@@ -181,6 +182,36 @@ void SscWriter::EndStep()
 void SscWriter::Flush(const int transportIndex) { TAU_SCOPED_TIMER_FUNC(); }
 
 // PRIVATE
+
+void SscWriter::MpiWait()
+{
+    if (m_NeedWait)
+    {
+        if (m_MpiMode == "twosided")
+        {
+            MPI_Status statuses[m_MpiRequests.size()];
+            MPI_Waitall(m_MpiRequests.size(), m_MpiRequests.data(), statuses);
+            m_MpiRequests.clear();
+        }
+        else if (m_MpiMode == "onesidedfencepush")
+        {
+            MPI_Win_fence(0, m_MpiWin);
+        }
+        else if (m_MpiMode == "onesidedpostpush")
+        {
+            MPI_Win_complete(m_MpiWin);
+        }
+        else if (m_MpiMode == "onesidedfencepull")
+        {
+            MPI_Win_fence(0, m_MpiWin);
+        }
+        else if (m_MpiMode == "onesidedpostpull")
+        {
+            MPI_Win_wait(m_MpiWin);
+        }
+        m_NeedWait = false;
+    }
+}
 
 void SscWriter::SyncMpiPattern()
 {
@@ -238,51 +269,13 @@ void SscWriter::SyncWritePattern()
                   << ", Writer Rank " << m_WriterRank << std::endl;
     }
 
-    // serialize local writer rank variables metadata
     nlohmann::json localRankMetaJ;
-    for (const auto &b : m_GlobalWritePattern[m_StreamRank])
-    {
-        localRankMetaJ["Variables"].emplace_back();
-        auto &jref = localRankMetaJ["Variables"].back();
-        jref["Name"] = b.name;
-        jref["Type"] = b.type;
-        jref["Shape"] = b.shape;
-        jref["Start"] = b.start;
-        jref["Count"] = b.count;
-        jref["BufferStart"] = b.bufferStart;
-        jref["BufferCount"] = b.bufferCount;
-    }
 
-    // serialize local writer rank attributes metadata
-    auto &attributesJson = localRankMetaJ["Attributes"];
-    const auto &attributeMap = m_IO.GetAttributesDataMap();
-    for (const auto &attributePair : attributeMap)
+    ssc::BlockVecToJson(m_GlobalWritePattern[m_StreamRank], localRankMetaJ);
+
+    if (m_WriterRank == 0)
     {
-        const std::string name(attributePair.first);
-        const std::string type(attributePair.second.first);
-        if (type.empty())
-        {
-        }
-#define declare_type(T)                                                        \
-    else if (type == helper::GetType<T>())                                     \
-    {                                                                          \
-        const auto &attribute = m_IO.InquireAttribute<T>(name);                \
-        nlohmann::json attributeJson;                                          \
-        attributeJson["Name"] = attribute->m_Name;                             \
-        attributeJson["Type"] = attribute->m_Type;                             \
-        attributeJson["IsSingleValue"] = attribute->m_IsSingleValue;           \
-        if (attribute->m_IsSingleValue)                                        \
-        {                                                                      \
-            attributeJson["Value"] = attribute->m_DataSingleValue;             \
-        }                                                                      \
-        else                                                                   \
-        {                                                                      \
-            attributeJson["Array"] = attribute->m_DataArray;                   \
-        }                                                                      \
-        attributesJson.emplace_back(std::move(attributeJson));                 \
-    }
-        ADIOS2_FOREACH_ATTRIBUTE_STDTYPE_1ARG(declare_type)
-#undef declare_type
+        ssc::AttributeMapToJson(m_IO, localRankMetaJ);
     }
 
     std::string localStr = localRankMetaJ.dump();
@@ -300,28 +293,8 @@ void SscWriter::SyncWritePattern()
 
     // deserialize global metadata Json
     nlohmann::json globalJson;
-    try
-    {
-        for (size_t i = 0; i < m_StreamSize; ++i)
-        {
-            if (globalVec[i * maxLocalSize] == '\0')
-            {
-                globalJson[i] = nullptr;
-            }
-            else
-            {
-                globalJson[i] = nlohmann::json::parse(
-                    globalVec.begin() + i * maxLocalSize,
-                    globalVec.begin() + (i + 1) * maxLocalSize);
-            }
-        }
-    }
-    catch (std::exception &e)
-    {
-        throw(std::runtime_error(
-            std::string("corrupted global write pattern metadata, ") +
-            std::string(e.what())));
-    }
+    ssc::LocalJsonToGlobalJson(globalVec, maxLocalSize, m_StreamSize,
+                               globalJson);
 
     // deserialize variables metadata
     ssc::JsonToBlockVecVec(globalJson, m_GlobalWritePattern);
@@ -371,9 +344,8 @@ void SscWriter::SyncReadPattern()
     }
 
     ssc::JsonToBlockVecVec(globalJson, m_GlobalReadPattern);
-    ssc::CalculateOverlap(m_GlobalReadPattern,
-                          m_GlobalWritePattern[m_StreamRank]);
-    m_AllSendingReaderRanks = ssc::AllOverlapRanks(m_GlobalReadPattern);
+    m_AllSendingReaderRanks = ssc::CalculateOverlap(
+        m_GlobalReadPattern, m_GlobalWritePattern[m_StreamRank]);
     CalculatePosition(m_GlobalWritePattern, m_GlobalReadPattern, m_WriterRank,
                       m_AllSendingReaderRanks);
 
@@ -394,8 +366,8 @@ void SscWriter::CalculatePosition(ssc::BlockVecVec &writerVecVec,
     for (auto &overlapRank : allOverlapRanks)
     {
         auto &readerRankMap = readerVecVec[overlapRank.first];
-        CalculateOverlap(writerVecVec, readerRankMap);
-        auto currentReaderOverlapWriterRanks = AllOverlapRanks(writerVecVec);
+        auto currentReaderOverlapWriterRanks =
+            CalculateOverlap(writerVecVec, readerRankMap);
         size_t bufferPosition = 0;
         for (size_t rank = 0; rank < writerVecVec.size(); ++rank)
         {
@@ -439,15 +411,12 @@ ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
 void SscWriter::DoClose(const int transportIndex)
 {
     TAU_SCOPED_TIMER_FUNC();
-    if (m_Verbosity >= 5)
-    {
-        std::cout << "SscWriter::DoClose, World Rank " << m_StreamRank
-                  << ", Writer Rank " << m_WriterRank << std::endl;
-    }
+
+    MpiWait();
 
     m_Buffer[0] = 1;
 
-    if (m_MpiMode == "TwoSided")
+    if (m_MpiMode == "twosided")
     {
         std::vector<MPI_Request> requests;
         for (const auto &i : m_AllSendingReaderRanks)
@@ -459,7 +428,7 @@ void SscWriter::DoClose(const int transportIndex)
         MPI_Status statuses[requests.size()];
         MPI_Waitall(requests.size(), requests.data(), statuses);
     }
-    else if (m_MpiMode == "OneSidedFencePush")
+    else if (m_MpiMode == "onesidedfencepush")
     {
         MPI_Win_fence(0, m_MpiWin);
         for (const auto &i : m_AllSendingReaderRanks)
@@ -469,7 +438,7 @@ void SscWriter::DoClose(const int transportIndex)
         }
         MPI_Win_fence(0, m_MpiWin);
     }
-    else if (m_MpiMode == "OneSidedPostPush")
+    else if (m_MpiMode == "onesidedpostpush")
     {
         MPI_Win_start(m_MpiAllReadersGroup, 0, m_MpiWin);
         for (const auto &i : m_AllSendingReaderRanks)
@@ -479,12 +448,12 @@ void SscWriter::DoClose(const int transportIndex)
         }
         MPI_Win_complete(m_MpiWin);
     }
-    else if (m_MpiMode == "OneSidedFencePull")
+    else if (m_MpiMode == "onesidedfencepull")
     {
         MPI_Win_fence(0, m_MpiWin);
         MPI_Win_fence(0, m_MpiWin);
     }
-    else if (m_MpiMode == "OneSidedPostPull")
+    else if (m_MpiMode == "onesidedpostpull")
     {
         MPI_Win_post(m_MpiAllReadersGroup, 0, m_MpiWin);
         MPI_Win_wait(m_MpiWin);

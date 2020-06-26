@@ -14,6 +14,8 @@
 #include "adios2/core/Engine.h"
 #include "adios2/helper/adiosFunctions.h"
 
+#include <sstream>
+
 #include "py11types.h"
 
 namespace adios2
@@ -65,14 +67,15 @@ void Engine::Put(Variable variable, const pybind11::array &array,
     helper::CheckForNullptr(variable.m_VariableBase,
                             "for variable, in call to Engine::Put numpy array");
 
-    const std::string type = variable.Type();
+    const adios2::DataType type =
+        helper::GetDataTypeFromString(variable.Type());
 
-    if (type == "compound")
+    if (type == adios2::DataType::Compound)
     {
         // not supported
     }
 #define declare_type(T)                                                        \
-    else if (type == helper::GetType<T>())                                     \
+    else if (type == helper::GetDataType<T>())                                 \
     {                                                                          \
         m_Engine->Put(                                                         \
             *dynamic_cast<core::Variable<T> *>(variable.m_VariableBase),       \
@@ -101,7 +104,8 @@ void Engine::Put(Variable variable, const std::string &string)
     helper::CheckForNullptr(variable.m_VariableBase,
                             "for variable, in call to Engine::Put string");
 
-    if (variable.Type() != helper::GetType<std::string>())
+    if (helper::GetDataTypeFromString(variable.Type()) !=
+        helper::GetDataType<std::string>())
     {
         throw std::invalid_argument(
             "ERROR: variable " + variable.Name() +
@@ -136,14 +140,15 @@ void Engine::Get(Variable variable, pybind11::array &array, const Mode launch)
         variable.m_VariableBase,
         "for variable, in call to Engine::Get a numpy array");
 
-    const std::string type = variable.Type();
+    const adios2::DataType type =
+        helper::GetDataTypeFromString(variable.Type());
 
-    if (type == "compound")
+    if (type == adios2::DataType::Compound)
     {
         // not supported
     }
 #define declare_type(T)                                                        \
-    else if (type == helper::GetType<T>())                                     \
+    else if (type == helper::GetDataType<T>())                                 \
     {                                                                          \
         m_Engine->Get(                                                         \
             *dynamic_cast<core::Variable<T> *>(variable.m_VariableBase),       \
@@ -174,9 +179,10 @@ void Engine::Get(Variable variable, std::string &string, const Mode launch)
     helper::CheckForNullptr(variable.m_VariableBase,
                             "for variable, in call to Engine::Get a string");
 
-    const std::string type = variable.Type();
+    const adios2::DataType type =
+        helper::GetDataTypeFromString(variable.Type());
 
-    if (type == helper::GetType<std::string>())
+    if (type == helper::GetDataType<std::string>())
     {
         m_Engine->Get(*dynamic_cast<core::Variable<std::string> *>(
                           variable.m_VariableBase),
@@ -277,6 +283,64 @@ void Engine::LockReaderSelections() const
     helper::CheckForNullptr(m_Engine,
                             "in call to Engine::LockReaderSelections");
     m_Engine->LockReaderSelections();
+}
+
+std::vector<std::map<std::string, std::string>>
+Engine::BlocksInfo(std::string &var_name, const size_t step) const
+{
+    std::vector<std::map<std::string, std::string>> rv;
+
+    // Grab the specified variable object and get its type string
+    adios2::DataType var_type = m_Engine->GetIO().InquireVariableType(var_name);
+
+    // Use the macro incantation to call the right instantiation of
+    // core::BlocksInfo<>() Note that we are flatting the Dims type items, and
+    // returning everything as a dictionary of strings.
+    if (false)
+    {
+    }
+#define GET_BLOCKS_INFO(T)                                                     \
+    else if (var_type == helper::GetDataType<T>())                             \
+    {                                                                          \
+        auto variable = m_Engine->GetIO().InquireVariable<T>(var_name);        \
+        auto infoVec = m_Engine->BlocksInfo<T>(*variable, step);               \
+        for (auto &info : infoVec)                                             \
+        {                                                                      \
+            std::map<std::string, std::string> info_map;                       \
+            std::stringstream start_ss;                                        \
+            for (size_t i = 0; i < info.Start.size(); ++i)                     \
+            {                                                                  \
+                if (i != 0)                                                    \
+                    start_ss << ",";                                           \
+                start_ss << info.Start[i];                                     \
+            }                                                                  \
+            info_map["Start"] = start_ss.str();                                \
+            std::stringstream count_ss;                                        \
+            for (size_t i = 0; i < info.Count.size(); ++i)                     \
+            {                                                                  \
+                if (i != 0)                                                    \
+                    count_ss << ",";                                           \
+                count_ss << info.Count[i];                                     \
+            }                                                                  \
+            info_map["Count"] = count_ss.str();                                \
+            info_map["WriterID"] = std::to_string(info.WriterID);              \
+            info_map["BlockID"] = std::to_string(info.BlockID);                \
+            info_map["IsValue"] = info.IsValue ? "True" : "False";             \
+            info_map["IsReverseDims"] = info.IsReverseDims ? "True" : "False"; \
+            rv.push_back(info_map);                                            \
+        }                                                                      \
+    }
+    ADIOS2_FOREACH_PYTHON_TYPE_1ARG(GET_BLOCKS_INFO)
+#undef GET_BLOCKS_INFO
+    else
+    {
+        throw std::invalid_argument("ERROR: variable " + var_name +
+                                    " can't be defined, either type is not "
+                                    "supported or is not memory "
+                                    "contiguous, in call to DefineVariable\n");
+    }
+
+    return rv;
 }
 
 } // end namespace py11

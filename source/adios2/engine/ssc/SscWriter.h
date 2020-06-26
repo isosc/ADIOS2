@@ -53,7 +53,9 @@ private:
     MPI_Win m_MpiWin;
     MPI_Group m_MpiAllReadersGroup;
     MPI_Comm m_StreamComm;
-    std::string m_MpiMode = "TwoSided";
+    std::string m_MpiMode = "twosided";
+    bool m_NeedWait = false;
+    std::vector<MPI_Request> m_MpiRequests;
 
     int m_StreamRank;
     int m_StreamSize;
@@ -70,6 +72,7 @@ private:
     void PutOneSidedFencePull();
     void PutOneSidedPostPull();
     void PutTwoSided();
+    void MpiWait();
 
 #define declare_type(T)                                                        \
     void DoPutSync(Variable<T> &, const T *) final;                            \
@@ -81,9 +84,6 @@ private:
 
     template <class T>
     void PutDeferredCommon(Variable<T> &variable, const T *values);
-
-    template <class T>
-    bool HasBlock(const Variable<T> &variable);
 
     void CalculatePosition(ssc::BlockVecVec &writerMapVec,
                            ssc::BlockVecVec &readerMapVec, const int writerRank,

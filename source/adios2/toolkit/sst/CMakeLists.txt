@@ -40,7 +40,7 @@ endif()
 
 # Set library version information
 set_target_properties(sst PROPERTIES
-  OUTPUT_NAME adios2_sst
+  OUTPUT_NAME adios2${ADIOS2_LIBRARY_SUFFIX}_sst
   VERSION ${ADIOS2_LIBRARY_VERSION}
   SOVERSION ${ADIOS2_VERSION_MAJOR}
 )
@@ -58,6 +58,7 @@ include(SSTFunctions)
 GenerateSSTHeaderConfig(${SST_CONFIG_OPTS})
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/SSTConfig.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/adios2/toolkit/sst
+  COMPONENT adios2_core-development
 )
 
 if (NOT MSVC)
@@ -71,9 +72,6 @@ target_include_directories(sst PRIVATE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
 )
 target_link_libraries(sst PRIVATE adios2::thirdparty::EVPath)
-if(ADIOS2_HAVE_MPI)
-  target_link_libraries(sst PRIVATE MPI::MPI_C)
-endif()
 
 if(NOT BUILD_SHARED_LIBS)
   # When sst is included in a static library we must export the

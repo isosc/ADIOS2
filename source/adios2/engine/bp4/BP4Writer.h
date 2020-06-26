@@ -14,6 +14,7 @@
 #include "adios2/common/ADIOSConfig.h"
 #include "adios2/core/Engine.h"
 #include "adios2/helper/adiosComm.h"
+#include "adios2/toolkit/burstbuffer/FileDrainerSingleThread.h"
 #include "adios2/toolkit/format/bp/bp4/BP4Serializer.h"
 #include "adios2/toolkit/transportman/TransportMan.h"
 
@@ -46,6 +47,8 @@ public:
     void EndStep() final;
     void Flush(const int transportIndex = -1) final;
 
+    size_t DebugGetDataBufferSize() const final;
+
 private:
     /** Single object controlling BP buffering */
     format::BP4Serializer m_BP4Serializer;
@@ -58,6 +61,32 @@ private:
 
     /* transport manager for managing the metadata index file */
     transportman::TransportMan m_FileMetadataIndexManager;
+
+    /*
+     *  Burst buffer variables
+     */
+    /** true if burst buffer is used to write */
+    bool m_WriteToBB = false;
+    /** true if burst buffer is drained to disk  */
+    bool m_DrainBB = true;
+    /** File drainer thread if burst buffer is used */
+    burstbuffer::FileDrainerSingleThread m_FileDrainer;
+    /** m_Name modified with burst buffer path if BB is used,
+     * == m_Name otherwise.
+     * m_Name is a constant of Engine and is the user provided target path
+     */
+    std::string m_BBName;
+    /* Name of subfiles to directly write to (for all transports)
+     * This is either original target or burst buffer if used */
+    std::vector<std::string> m_SubStreamNames;
+    /* Name of subfiles on target if burst buffer is used (for all transports)
+     */
+    std::vector<std::string> m_DrainSubStreamNames;
+    std::vector<std::string> m_MetadataFileNames;
+    std::vector<std::string> m_DrainMetadataFileNames;
+    std::vector<std::string> m_MetadataIndexFileNames;
+    std::vector<std::string> m_DrainMetadataIndexFileNames;
+    std::vector<std::string> m_ActiveFlagFileNames;
 
     void Init() final;
 
@@ -88,7 +117,8 @@ private:
 
     template <class T>
     void PutSyncCommon(Variable<T> &variable,
-                       const typename Variable<T>::Info &blockInfo);
+                       const typename Variable<T>::Info &blockInfo,
+                       const bool resize = true);
 
     template <class T>
     void PutDeferredCommon(Variable<T> &variable, const T *data);
@@ -101,13 +131,13 @@ private:
      * profilers*/
     void WriteProfilingJSONFile();
 
-    void UpdateActiveFlag(const bool active);
-
     void PopulateMetadataIndexFileContent(
         format::BufferSTL &buffer, const uint64_t currentStep,
         const uint64_t mpirank, const uint64_t pgIndexStart,
         const uint64_t variablesIndexStart, const uint64_t attributesIndexStart,
         const uint64_t currentStepEndPos, const uint64_t currentTimeStamp);
+
+    void UpdateActiveFlag(const bool active);
 
     void WriteCollectiveMetadataFile(const bool isFinal = false);
 

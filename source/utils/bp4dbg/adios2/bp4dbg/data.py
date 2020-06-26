@@ -42,11 +42,6 @@ def ReadEncodedStringArray(f, ID, limit, nStrings):
     return True, s
 
 
-def ReadHeader(f):
-    # There is no header at this time in data.*\
-    print("Header info: There is no header in data.*")
-
-
 def readDataToNumpyArray(f, typeName, nElements):
     if typeName == 'byte':
         return np.fromfile(f, dtype=np.int8, count=nElements)
@@ -84,7 +79,7 @@ def readDataToNumpyArray(f, typeName, nElements):
 
 def ReadCharacteristicsFromData(f, limit, typeID, ndim):
     cStartPosition = f.tell()
-    dataTypeName = bp4dbg_utils.GetTypeName(typeID)
+    dataTypeName = GetTypeName(typeID)
     # 1 byte NCharacteristics
     nCharacteristics = np.fromfile(f, dtype=np.uint8, count=1)[0]
     print("      # of Characteristics    : {0}".format(nCharacteristics))
@@ -96,7 +91,7 @@ def ReadCharacteristicsFromData(f, limit, typeID, ndim):
         print("      Characteristics[{0}]".format(i))
         # 1 byte TYPE
         cID = np.fromfile(f, dtype=np.uint8, count=1)[0]
-        cName = bp4dbg_utils.GetCharacteristicName(cID)
+        cName = GetCharacteristicName(cID)
         print("          Type        : {0} ({1}) ".format(cName, cID))
         if cName == 'value' or cName == 'min' or cName == 'max':
             if dataTypeName == 'string':
@@ -173,7 +168,7 @@ def ReadVarData(f, nElements, typeID, ldims, varLen,
                 varsStartPosition, varsTotalLength):
     if typeID == 9:  # string type
         return ReadStringVarData(f, varLen, varsStartPosition)
-    typeSize = bp4dbg_utils.GetTypeSize(typeID)
+    typeSize = GetTypeSize(typeID)
     if (typeSize == 0):
         print("ERROR: Cannot process variable data block with "
               "unknown type size")
@@ -195,7 +190,7 @@ def ReadVarData(f, nElements, typeID, ldims, varLen,
 
     if nElements == 1:
         # single value. read and print
-        value = readDataToNumpyArray(f, bp4dbg_utils.GetTypeName(typeID),
+        value = readDataToNumpyArray(f, GetTypeName(typeID),
                                      nElements)
         print("      Payload (value) : {0} ({1} bytes)".format(
             value[0], nBytes))
@@ -203,7 +198,7 @@ def ReadVarData(f, nElements, typeID, ldims, varLen,
         # seek instead of reading for now
         # f.read(nBytes)
         f.seek(nBytes, 1)
-        # data = readDataToNumpyArray(f, bp4dbg_utils.GetTypeName(typeID),
+        # data = readDataToNumpyArray(f, GetTypeName(typeID),
         #                            nElements)
         print("      Payload (array) : {0} bytes".format(nBytes))
 
@@ -259,11 +254,13 @@ def ReadVMD(f, varidx, varsStartPosition, varsTotalLength):
 
     # 1 byte ORDER (K, C, F)
     order = f.read(1)
-    if (order != b'K' and order != b'C' and order != b'F'):
+    if (order != b'K' and order != b'C' and order != b'F' and order != b'\x00'):
         print(
             "ERROR: Next byte for Order must be 'K', 'C', or 'F' "
             "but it isn't = {0}".format(order))
         return False
+    if (order == b'\x00'):
+        order = b'0'
     print("        Order           : " + order.decode('ascii'))
 
     # 1 byte UNUSED
@@ -273,7 +270,7 @@ def ReadVMD(f, varidx, varsStartPosition, varsTotalLength):
     # 1 byte TYPE
     typeID = np.fromfile(f, dtype=np.uint8, count=1)[0]
     print("      Type            : {0} ({1}) ".format(
-        bp4dbg_utils.GetTypeName(typeID), typeID))
+        GetTypeName(typeID), typeID))
 
     # ISDIMENSIONS 1 byte, 'y' or 'n'
     isDimensionVar = f.read(1)
@@ -325,7 +322,7 @@ def ReadVMD(f, varidx, varsStartPosition, varsTotalLength):
         if (isDimensionVarID == b'\0'):
             isDimensionVarID = b'n'
         gdim = np.fromfile(f, dtype=np.uint64, count=1)[0]
-        if i == 0 and ldims[i] == 0 and gdim == bp4dbg_utils.LocalValueDim:
+        if i == 0 and ldims[i] == 0 and gdim == LocalValueDim:
             print("           global dim : LocalValueDim ({0})".format(gdim))
             isLocalValueArray = True
         else:
@@ -435,7 +432,7 @@ def ReadAMD(f, attridx, attrsStartPosition, attrsTotalLength):
 
     # 1 byte TYPE
     typeID = np.fromfile(f, dtype=np.uint8, count=1)[0]
-    typeName = bp4dbg_utils.GetTypeName(typeID)
+    typeName = GetTypeName(typeID)
     print("      Type            : {0} ({1}) ".format(typeName, typeID))
 
     # Read Attribute data
@@ -462,7 +459,7 @@ def ReadAMD(f, attridx, attrsStartPosition, attrsTotalLength):
         print("]")
     else:
         nBytes = np.fromfile(f, dtype=np.uint32, count=1)[0]
-        typeSize = bp4dbg_utils.GetTypeSize(typeID)
+        typeSize = GetTypeSize(typeID)
         nElems = int(nBytes / typeSize)
         data = readDataToNumpyArray(f, typeName, nElems)
         print("      Value           : [", end="")
@@ -624,7 +621,7 @@ def DumpData(fileName):
     print("========================================================")
     with open(fileName, "rb") as f:
         fileSize = fstat(f.fileno()).st_size
-        status = bp4dbg_utils.ReadHeader(f, fileSize, "Data")
+        status = ReadHeader(f, fileSize, "Data")
         if not status:
             return status
         pgidx = 0

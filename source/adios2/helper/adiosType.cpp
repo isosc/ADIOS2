@@ -20,6 +20,72 @@ namespace adios2
 namespace helper
 {
 
+DataType GetDataTypeFromString(std::string const &type) noexcept
+{
+    // Keep in sync with adios2::ToString(DataType).
+    if (type == "int8_t")
+    {
+        return DataType::Int8;
+    }
+    if (type == "int16_t")
+    {
+        return DataType::Int16;
+    }
+    if (type == "int32_t")
+    {
+        return DataType::Int32;
+    }
+    if (type == "int64_t")
+    {
+        return DataType::Int64;
+    }
+    if (type == "uint8_t")
+    {
+        return DataType::UInt8;
+    }
+    if (type == "uint16_t")
+    {
+        return DataType::UInt16;
+    }
+    if (type == "uint32_t")
+    {
+        return DataType::UInt32;
+    }
+    if (type == "uint64_t")
+    {
+        return DataType::UInt64;
+    }
+    if (type == "float")
+    {
+        return DataType::Float;
+    }
+    if (type == "double")
+    {
+        return DataType::Double;
+    }
+    if (type == "long double")
+    {
+        return DataType::LongDouble;
+    }
+    if (type == "float complex")
+    {
+        return DataType::FloatComplex;
+    }
+    if (type == "double complex")
+    {
+        return DataType::DoubleComplex;
+    }
+    if (type == "string")
+    {
+        return DataType::String;
+    }
+    if (type == "compound")
+    {
+        return DataType::Compound;
+    }
+    return DataType::None;
+}
+
 std::string DimsToCSV(const Dims &dimensions) noexcept
 {
     std::string dimsCSV;
@@ -103,7 +169,7 @@ Uint64VectorToSizetVector(const std::vector<uint64_t> &in) noexcept
 }
 
 TimeUnit StringToTimeUnit(const std::string timeUnitString,
-                          const bool debugMode, const std::string hint)
+                          const std::string hint)
 {
     TimeUnit timeUnit = TimeUnit::Microseconds; // default
 
@@ -130,20 +196,16 @@ TimeUnit StringToTimeUnit(const std::string timeUnitString,
     }
     else
     {
-        if (debugMode)
-        {
-            throw std::invalid_argument("ERROR: invalid value " +
-                                        timeUnitString +
-                                        " in Parameter key=ProfileUnits, "
-                                        " must be Microseconds, Milliseconds, "
-                                        "Seconds, Minutes or Hours " +
-                                        hint + "\n");
-        }
+        throw std::invalid_argument("ERROR: invalid value " + timeUnitString +
+                                    " in Parameter key=ProfileUnits, "
+                                    " must be Microseconds, Milliseconds, "
+                                    "Seconds, Minutes or Hours " +
+                                    hint + "\n");
     }
     return timeUnit;
 }
 
-size_t BytesFactor(const std::string units, const bool debugMode)
+size_t BytesFactor(const std::string units)
 {
     size_t factor = 1; // bytes
     if (units == "Gb" || units == "gb")
@@ -164,12 +226,8 @@ size_t BytesFactor(const std::string units, const bool debugMode)
     }
     else
     {
-        if (debugMode)
-        {
-            throw std::invalid_argument(
-                "ERROR: units " + units +
-                " not supported in call to BytesFactor\n");
-        }
+        throw std::invalid_argument("ERROR: units " + units +
+                                    " not supported in call to BytesFactor\n");
     }
     return factor;
 }

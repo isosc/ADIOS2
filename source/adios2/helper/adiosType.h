@@ -98,23 +98,16 @@ struct SubStreamBoxInfo
 
 /**
  * Gets type from template parameter T
- * @return string with type
+ * @return DataType enumeration value
  */
 template <class T>
-std::string GetType() noexcept;
+DataType GetDataType() noexcept;
 
 /**
- * Check in types set if "type" is one of the aliases for a certain type,
- * (e.g. if type = integer is an accepted alias for "int", returning true)
- * @param type input to be compared with an alias
- * @param aliases set containing aliases to a certain type, typically
- * Support::DatatypesAliases from Support.h
- * @return true: is an alias, false: is not
+ * Gets type from string, inversing ToString(DataType)
+ * @return DataType enumeration value, or DataType::None on failure
  */
-template <class T>
-bool IsTypeAlias(
-    const std::string type,
-    const std::map<std::string, std::set<std::string>> &aliases) noexcept;
+DataType GetDataTypeFromString(std::string const &) noexcept;
 
 /**
  * Converts a vector of dimensions to a CSV string
@@ -157,20 +150,18 @@ std::vector<size_t> Uint64ArrayToSizetVector(const size_t nElements,
 /**
  * Converts a recognized time unit string to TimeUnit enum
  * @param timeUnit string with acceptable time unit
- * @param debugMode true: throw exception if timeUnitString not valid
  * @return TimeUnit enum (int) TimeUnit::s, TimeUnit::ms, etc.
  */
 TimeUnit StringToTimeUnit(const std::string timeUnitString,
-                          const bool debugMode, const std::string hint = "");
+                          const std::string hint = "");
 
 /**
  * Returns the conversion factor from input units Tb, Gb, Mb, Kb, to bytes as a
  * factor of 1024
  * @param units input
- * @param debugMode true: check if input units are valid
  * @return conversion factor to bytes, size_t
  */
-size_t BytesFactor(const std::string units, const bool debugMode);
+size_t BytesFactor(const std::string units);
 
 /**
  * Returns open mode as a string
@@ -227,6 +218,14 @@ void CheckForNullptr(T *pointer, const std::string hint);
  */
 template <class T, class U>
 std::set<T> KeysToSet(const std::unordered_map<T, U> &hash) noexcept;
+
+/**
+ * Convert a vector to a set (without duplicate entries)
+ * @param input vector
+ * @return ordered keys content
+ */
+template <class T>
+std::set<T> VectorToSet(const std::vector<T> &input) noexcept;
 
 /**
  * Calls map.erase(key) returning current value. Throws an exception if Key not

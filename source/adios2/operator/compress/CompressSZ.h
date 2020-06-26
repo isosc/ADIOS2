@@ -26,9 +26,8 @@ class CompressSZ : public Operator
 public:
     /**
      * Unique constructor
-     * @param debugMode
      */
-    CompressSZ(const Params &parameters, const bool debugMode);
+    CompressSZ(const Params &parameters);
 
     ~CompressSZ() = default;
 
@@ -44,9 +43,8 @@ public:
      * @return size of compressed buffer in bytes
      */
     size_t Compress(const void *dataIn, const Dims &dimensions,
-                    const size_t elementSize, const std::string type,
-                    void *bufferOut, const Params &parameters,
-                    Params &info) const final;
+                    const size_t elementSize, DataType type, void *bufferOut,
+                    const Params &parameters, Params &info) const final;
 
     using Operator::Decompress;
 
@@ -60,7 +58,7 @@ public:
      * @return size of decompressed data in dataOut
      */
     size_t Decompress(const void *bufferIn, const size_t sizeIn, void *dataOut,
-                      const Dims &dimensions, const std::string type,
+                      const Dims &dimensions, DataType type,
                       const Params &parameters) const final;
 };
 

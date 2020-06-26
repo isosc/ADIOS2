@@ -135,7 +135,7 @@ void CopyPayload(char *dest, const Dims &destStart, const Dims &destCount,
                  const Dims &srcMemStart = Dims(),
                  const Dims &srcMemCount = Dims(),
                  const bool endianReverse = false,
-                 const std::string destType = "") noexcept;
+                 const DataType destType = DataType::None) noexcept;
 
 /**
  * Clips the contiguous memory corresponding to an intersection and puts it in
@@ -186,8 +186,8 @@ void ClipVector(std::vector<T> &vec, const size_t start,
                 const size_t end) noexcept;
 
 template <class T>
-void Resize(std::vector<T> &vec, const size_t dataSize, const bool debugMode,
-            const std::string hint, T value = T());
+void Resize(std::vector<T> &vec, const size_t dataSize, const std::string hint,
+            T value = T());
 
 /**
  * Author:Shawn Yang, shawnyang610@gmail.com

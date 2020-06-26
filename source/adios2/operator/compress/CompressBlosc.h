@@ -29,9 +29,8 @@ class CompressBlosc : public Operator
 public:
     /**
      * Unique constructor
-     * @param debugMode
      */
-    CompressBlosc(const Params &parameters, const bool debugMode);
+    CompressBlosc(const Params &parameters);
 
     ~CompressBlosc() = default;
 
@@ -45,9 +44,8 @@ public:
      * @return size of compressed buffer in bytes
      */
     size_t Compress(const void *dataIn, const Dims &dimensions,
-                    const size_t elementSize, const std::string type,
-                    void *bufferOut, const Params &parameters,
-                    Params &info) const final;
+                    const size_t elementSize, DataType type, void *bufferOut,
+                    const Params &parameters, Params &info) const final;
 
     /**
      * Decompression signature for legacy libraries that use void*

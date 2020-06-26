@@ -1,4 +1,5 @@
-Python_add_library(adios2py MODULE
+Python_add_library(adios2_py MODULE
+  WITH_SOABI
   py11ADIOS.cpp
   py11IO.cpp
   py11Variable.cpp
@@ -8,28 +9,55 @@ Python_add_library(adios2py MODULE
   py11File.cpp py11File.tcc
   py11glue.cpp
 )
-target_link_libraries(adios2py PRIVATE adios2 pybind11 Python::NumPy)
+target_compile_definitions(adios2_py PRIVATE "ADIOS2_PYTHON_MODULE_NAME=adios2${ADIOS2_LIBRARY_SUFFIX}")
 if(ADIOS2_HAVE_MPI)
-  target_link_libraries(adios2py PRIVATE Python::mpi4py)
+  target_sources(adios2_py PRIVATE
+    py11ADIOSMPI.cpp
+    py11FileMPI.cpp
+    py11IOMPI.cpp
+  )
+  set(maybe_adios2_cxx11_mpi adios2_cxx11_mpi)
+  set(maybe_adios2_core_mpi adios2_core_mpi)
+  set(maybe_mpi4py Python::mpi4py)
+else()
+  set(maybe_adios2_cxx11_mpi)
+  set(maybe_adios2_core_mpi)
+  set(maybe_mpi4py)
 endif()
+target_link_libraries(adios2_py PRIVATE
+  ${maybe_adios2_cxx11_mpi} adios2_cxx11
+  ${maybe_adios2_core_mpi} adios2_core
+  adios2::thirdparty::pybind11
+  ${maybe_mpi4py} Python::NumPy
+  )
 configure_file(
-  ${CMAKE_CURRENT_SOURCE_DIR}/__init__.py
+  ${CMAKE_CURRENT_SOURCE_DIR}/__init__.py.in
   ${CMAKE_PYTHON_OUTPUT_DIRECTORY}/adios2/__init__.py
-  COPYONLY
+  @ONLY
 )
 
-set_target_properties(adios2py PROPERTIES
+set_target_properties(adios2_py PROPERTIES
   CXX_VISIBILITY_PRESET hidden
-  OUTPUT_NAME adios2
+  OUTPUT_NAME adios2${ADIOS2_LIBRARY_SUFFIX}
   ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_PYTHON_OUTPUT_DIRECTORY}/adios2
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_PYTHON_OUTPUT_DIRECTORY}/adios2
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_PYTHON_OUTPUT_DIRECTORY}/adios2
   PDB_OUTPUT_DIRECTORY ${CMAKE_PYTHON_OUTPUT_DIRECTORY}/adios2
   COMPILE_PDB_OUTPUT_DIRECTORY ${CMAKE_PYTHON_OUTPUT_DIRECTORY}/adios2
 )
-install(TARGETS adios2py
+
+string(REGEX REPLACE "[^/]+" ".." relative_base "${CMAKE_INSTALL_PYTHONDIR}/adios2")
+if(CMAKE_SYSTEM_NAME MATCHES "Linux")
+  set_target_properties(adios2_py PROPERTIES
+    INSTALL_RPATH "$ORIGIN/${relative_base}/${CMAKE_INSTALL_LIBDIR}"
+  )
+endif()
+
+install(TARGETS adios2_py
   DESTINATION ${CMAKE_INSTALL_PYTHONDIR}/adios2
+  COMPONENT adios2_python-python
 )
-install(FILES __init__.py
+install(FILES ${CMAKE_PYTHON_OUTPUT_DIRECTORY}/adios2/__init__.py
   DESTINATION ${CMAKE_INSTALL_PYTHONDIR}/adios2
+  COMPONENT adios2_python-python
 )

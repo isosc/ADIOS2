@@ -28,9 +28,8 @@ class CompressPNG : public Operator
 public:
     /**
      * Unique constructor
-     * @param debugMode
      */
-    CompressPNG(const Params &parameters, const bool debugMode);
+    CompressPNG(const Params &parameters);
 
     ~CompressPNG() = default;
 
@@ -44,9 +43,8 @@ public:
      * @return size of compressed buffer in bytes
      */
     size_t Compress(const void *dataIn, const Dims &dimensions,
-                    const size_t elementSize, const std::string type,
-                    void *bufferOut, const Params &parameters,
-                    Params &info) const final;
+                    const size_t elementSize, DataType type, void *bufferOut,
+                    const Params &parameters, Params &info) const final;
 
     /**
      * Decompression signature for legacy libraries that use void*
@@ -62,8 +60,7 @@ public:
 
 private:
     /**
-     * In debug mode, check status from PNG compression and decompression
-     * functions
+     * check status from PNG compression and decompression functions
      * @param status returned by PNG library
      * @param hint extra exception information
      */

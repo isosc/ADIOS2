@@ -10,6 +10,7 @@
 
 #include "SscHelper.h"
 #include "adios2/common/ADIOSMacros.h"
+#include "adios2/helper/adiosJSONcomplex.h"
 #include "adios2/helper/adiosType.h"
 #include <iostream>
 #include <numeric>
@@ -23,23 +24,35 @@ namespace engine
 namespace ssc
 {
 
-size_t GetTypeSize(const std::string &type)
+size_t GetTypeSize(DataType type)
 {
-    if (type.empty())
+    if (type == DataType::None)
     {
         throw(std::runtime_error("unknown data type"));
     }
 #define declare_type(T)                                                        \
-    else if (type == helper::GetType<T>()) { return sizeof(T); }
+    else if (type == helper::GetDataType<T>()) { return sizeof(T); }
     ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
 #undef declare_type
     else { throw(std::runtime_error("unknown data type")); }
 }
 
-size_t TotalDataSize(const Dims &dims, const std::string &type)
+size_t TotalDataSize(const Dims &dims, DataType type, const ShapeID &shapeId)
 {
-    return std::accumulate(dims.begin(), dims.end(), GetTypeSize(type),
-                           std::multiplies<size_t>());
+    if (shapeId == ShapeID::GlobalArray || shapeId == ShapeID::LocalArray)
+    {
+        return std::accumulate(dims.begin(), dims.end(), GetTypeSize(type),
+                               std::multiplies<size_t>());
+    }
+    else if (shapeId == ShapeID::GlobalValue || shapeId == ShapeID::LocalValue)
+    {
+        return GetTypeSize(type);
+    }
+    else
+    {
+        throw(std::runtime_error("ShapeID not supported"));
+    }
+    return 0;
 }
 
 size_t TotalDataSize(const BlockVec &bv)
@@ -47,13 +60,22 @@ size_t TotalDataSize(const BlockVec &bv)
     size_t s = 0;
     for (const auto &b : bv)
     {
-        s += TotalDataSize(b.count, b.type);
+        if (b.type == DataType::String)
+        {
+            s += b.bufferCount;
+        }
+        else
+        {
+            s += TotalDataSize(b.count, b.type, b.shapeId);
+        }
     }
     return s;
 }
 
-void CalculateOverlap(BlockVecVec &globalVecVec, const BlockVec &localVec)
+RankPosMap CalculateOverlap(BlockVecVec &globalVecVec, const BlockVec &localVec)
 {
+    RankPosMap ret;
+    int rank = 0;
     for (auto &rankBlockVec : globalVecVec)
     {
         for (auto &gBlock : rankBlockVec)
@@ -62,74 +84,124 @@ void CalculateOverlap(BlockVecVec &globalVecVec, const BlockVec &localVec)
             {
                 if (lBlock.name == gBlock.name)
                 {
-                    if (gBlock.start.size() != gBlock.count.size() ||
-                        lBlock.start.size() != lBlock.count.size() ||
-                        gBlock.start.size() != lBlock.start.size())
+                    if (gBlock.shapeId == ShapeID::GlobalValue)
                     {
-                        continue;
+                        ret[rank].first = 0;
                     }
-                    gBlock.overlapStart.resize(gBlock.start.size());
-                    gBlock.overlapCount.resize(gBlock.count.size());
-                    for (size_t i = 0; i < gBlock.start.size(); ++i)
+                    else if (gBlock.shapeId == ShapeID::GlobalArray)
                     {
-                        if (gBlock.start[i] + gBlock.count[i] <=
-                                lBlock.start[i] or
-                            lBlock.start[i] + lBlock.count[i] <=
-                                gBlock.start[i])
+                        bool hasOverlap = true;
+                        for (size_t i = 0; i < gBlock.start.size(); ++i)
                         {
-                            gBlock.overlapStart.clear();
-                            gBlock.overlapCount.clear();
-                            break;
+                            if (gBlock.start[i] + gBlock.count[i] <=
+                                    lBlock.start[i] or
+                                lBlock.start[i] + lBlock.count[i] <=
+                                    gBlock.start[i])
+                            {
+                                hasOverlap = false;
+                                break;
+                            }
                         }
-                        if (gBlock.start[i] < lBlock.start[i])
+                        if (hasOverlap)
                         {
-                            gBlock.overlapStart[i] = lBlock.start[i];
+                            ret[rank].first = 0;
                         }
-                        else
-                        {
-                            gBlock.overlapStart[i] = gBlock.start[i];
-                        }
-                        if (gBlock.start[i] + gBlock.count[i] <
-                            lBlock.start[i] + lBlock.count[i])
-                        {
-                            gBlock.overlapCount[i] = gBlock.start[i] +
-                                                     gBlock.count[i] -
-                                                     gBlock.overlapStart[i];
-                        }
-                        else
-                        {
-                            gBlock.overlapCount[i] = lBlock.start[i] +
-                                                     lBlock.count[i] -
-                                                     gBlock.overlapStart[i];
-                        }
+                    }
+                    else if (gBlock.shapeId == ShapeID::LocalValue)
+                    {
+                    }
+                    else if (gBlock.shapeId == ShapeID::LocalArray)
+                    {
                     }
                 }
             }
         }
-    }
-}
-
-RankPosMap AllOverlapRanks(const BlockVecVec &bvv)
-{
-    RankPosMap ret;
-    int rank = 0;
-    for (const auto &bv : bvv)
-    {
-        bool hasOverlap = false;
-        for (const auto &b : bv)
-        {
-            if (not b.overlapCount.empty())
-            {
-                hasOverlap = true;
-            }
-        }
-        if (hasOverlap)
-        {
-            ret[rank].first = 0;
-        }
         ++rank;
     }
     return ret;
+}
+
+void BlockVecToJson(const BlockVec &input, nlohmann::json &output)
+{
+    for (const auto &b : input)
+    {
+        output["Variables"].emplace_back();
+        auto &jref = output["Variables"].back();
+        jref["Name"] = b.name;
+        jref["Type"] = ToString(b.type);
+        jref["ShapeID"] = b.shapeId;
+        jref["Shape"] = b.shape;
+        jref["Start"] = b.start;
+        jref["Count"] = b.count;
+        jref["BufferStart"] = b.bufferStart;
+        jref["BufferCount"] = b.bufferCount;
+        if (!b.value.empty())
+        {
+            jref["Value"] = b.value;
+        }
+    }
+}
+
+void AttributeMapToJson(IO &input, nlohmann::json &output)
+{
+    const auto &attributeMap = input.GetAttributesDataMap();
+    auto &attributesJson = output["Attributes"];
+    for (const auto &attributePair : attributeMap)
+    {
+        const std::string name(attributePair.first);
+        const DataType type(attributePair.second.first);
+        if (type == DataType::None)
+        {
+        }
+#define declare_type(T)                                                        \
+    else if (type == helper::GetDataType<T>())                                 \
+    {                                                                          \
+        const auto &attribute = input.InquireAttribute<T>(name);               \
+        nlohmann::json attributeJson;                                          \
+        attributeJson["Name"] = attribute->m_Name;                             \
+        attributeJson["Type"] = ToString(attribute->m_Type);                   \
+        attributeJson["IsSingleValue"] = attribute->m_IsSingleValue;           \
+        if (attribute->m_IsSingleValue)                                        \
+        {                                                                      \
+            attributeJson["Value"] = attribute->m_DataSingleValue;             \
+        }                                                                      \
+        else                                                                   \
+        {                                                                      \
+            attributeJson["Array"] = attribute->m_DataArray;                   \
+        }                                                                      \
+        output["Attributes"].emplace_back(std::move(attributeJson));           \
+    }
+        ADIOS2_FOREACH_ATTRIBUTE_STDTYPE_1ARG(declare_type)
+#undef declare_type
+    }
+}
+
+void LocalJsonToGlobalJson(const std::vector<char> &input,
+                           const size_t maxLocalSize, const int streamSize,
+                           nlohmann::json &output)
+{
+    try
+    {
+        for (size_t i = 0; i < streamSize; ++i)
+        {
+            if (input[i * maxLocalSize] == '\0')
+            {
+                output[i] = nullptr;
+            }
+            else
+            {
+                output[i] = nlohmann::json::parse(
+                    input.begin() + i * maxLocalSize,
+                    input.begin() + (i + 1) * maxLocalSize);
+            }
+        }
+    }
+    catch (std::exception &e)
+    {
+        throw(std::runtime_error(
+            std::string("corrupted global write pattern metadata, ") +
+            std::string(e.what())));
+    }
 }
 
 void JsonToBlockVecVec(const nlohmann::json &input, BlockVecVec &output)
@@ -145,12 +217,21 @@ void JsonToBlockVecVec(const nlohmann::json &input, BlockVecVec &output)
                 output[i].emplace_back();
                 auto &b = output[i].back();
                 b.name = j["Name"].get<std::string>();
-                b.type = j["Type"].get<std::string>();
+                b.type =
+                    helper::GetDataTypeFromString(j["Type"].get<std::string>());
+                b.shapeId = j["ShapeID"].get<ShapeID>();
                 b.start = j["Start"].get<Dims>();
                 b.count = j["Count"].get<Dims>();
                 b.shape = j["Shape"].get<Dims>();
                 b.bufferStart = j["BufferStart"].get<size_t>();
                 b.bufferCount = j["BufferCount"].get<size_t>();
+                auto it = j.find("Value");
+                if (it != j.end())
+                {
+                    auto value = it->get<std::vector<char>>();
+                    b.value.resize(value.size());
+                    std::memcpy(b.value.data(), value.data(), value.size());
+                }
             }
         }
     }
@@ -214,12 +295,10 @@ void PrintBlock(const BlockInfo &b, const std::string &label)
 {
     std::cout << label << std::endl;
     std::cout << b.name << std::endl;
-    std::cout << "    Type : " << b.type << std::endl;
+    std::cout << "    DataType : " << ToString(b.type) << std::endl;
     PrintDims(b.shape, "    Shape : ");
     PrintDims(b.start, "    Start : ");
     PrintDims(b.count, "    Count : ");
-    PrintDims(b.overlapStart, "    Overlap Start : ");
-    PrintDims(b.overlapCount, "    Overlap Count : ");
     std::cout << "    Position Start : " << b.bufferStart << std::endl;
     std::cout << "    Position Count : " << b.bufferCount << std::endl;
 }
@@ -230,12 +309,10 @@ void PrintBlockVec(const BlockVec &bv, const std::string &label)
     for (const auto &i : bv)
     {
         std::cout << i.name << std::endl;
-        std::cout << "    Type : " << i.type << std::endl;
+        std::cout << "    DataType : " << ToString(i.type) << std::endl;
         PrintDims(i.shape, "    Shape : ");
         PrintDims(i.start, "    Start : ");
         PrintDims(i.count, "    Count : ");
-        PrintDims(i.overlapStart, "    Overlap Start : ");
-        PrintDims(i.overlapCount, "    Overlap Count : ");
         std::cout << "    Position Start : " << i.bufferStart << std::endl;
         std::cout << "    Position Count : " << i.bufferCount << std::endl;
     }
@@ -251,12 +328,10 @@ void PrintBlockVecVec(const BlockVecVec &bvv, const std::string &label)
         for (const auto &i : bv)
         {
             std::cout << "    " << i.name << std::endl;
-            std::cout << "        Type : " << i.type << std::endl;
+            std::cout << "        DataType : " << ToString(i.type) << std::endl;
             PrintDims(i.shape, "        Shape : ");
             PrintDims(i.start, "        Start : ");
             PrintDims(i.count, "        Count : ");
-            PrintDims(i.overlapStart, "        Overlap Start : ");
-            PrintDims(i.overlapCount, "        Overlap Count : ");
             std::cout << "        Position Start : " << i.bufferStart
                       << std::endl;
             std::cout << "        Position Count : " << i.bufferCount
@@ -301,45 +376,6 @@ void PrintMpiInfo(const MpiInfo &writersInfo, const MpiInfo &readersInfo)
         ++s;
     }
     std::cout << std::endl;
-}
-
-bool GetParameter(const Params &params, const std::string &key, int &value)
-{
-    auto it = params.find(key);
-    if (it == params.end())
-    {
-        return false;
-    }
-    else
-    {
-        try
-        {
-            value = std::stoi(it->second);
-        }
-        catch (...)
-        {
-            std::string error =
-                "Engine parameter " + key + " can only be integer numbers";
-            std::cerr << error << std::endl;
-            return false;
-        }
-    }
-    return true;
-}
-
-bool GetParameter(const Params &params, const std::string &key,
-                  std::string &value)
-{
-    auto it = params.find(key);
-    if (it == params.end())
-    {
-        return false;
-    }
-    else
-    {
-        value = it->second;
-    }
-    return true;
 }
 
 } // end namespace ssc

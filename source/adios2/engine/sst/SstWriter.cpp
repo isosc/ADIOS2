@@ -141,9 +141,9 @@ StepStatus SstWriter::BeginStep(StepMode mode, const float timeout_sec)
         // initialize BP serializer, deleted in
         // SstWriter::EndStep()::lf_FreeBlocks()
         m_BP3Serializer = std::unique_ptr<format::BP3Serializer>(
-            new format::BP3Serializer(m_Comm, m_DebugMode));
+            new format::BP3Serializer(m_Comm));
         m_BP3Serializer->Init(m_IO.m_Parameters,
-                              "in call to BP3::Open for writing");
+                              "in call to BP3::Open for writing", "sst");
         m_BP3Serializer->m_MetadataSet.TimeStep = 1;
         m_BP3Serializer->m_MetadataSet.CurrentStep = m_WriterStep;
     }
@@ -169,12 +169,12 @@ void SstWriter::FFSMarshalAttributes()
     for (const auto &attributePair : attributesDataMap)
     {
         const std::string name(attributePair.first);
-        const std::string type(attributePair.second.first);
+        const DataType type(attributePair.second.first);
 
-        if (type == "unknown")
+        if (type == DataType::None)
         {
         }
-        else if (type == helper::GetType<std::string>())
+        else if (type == helper::GetDataType<std::string>())
         {
             core::Attribute<std::string> &attribute =
                 *m_IO.InquireAttribute<std::string>(name);
@@ -185,11 +185,12 @@ void SstWriter::FFSMarshalAttributes()
                 //
             }
 
-            SstFFSMarshalAttribute(m_Output, name.c_str(), type.c_str(),
-                                   sizeof(char *), element_count, data_addr);
+            SstFFSMarshalAttribute(m_Output, name.c_str(),
+                                   ToString(type).c_str(), sizeof(char *),
+                                   element_count, data_addr);
         }
 #define declare_type(T)                                                        \
-    else if (type == helper::GetType<T>())                                     \
+    else if (type == helper::GetDataType<T>())                                 \
     {                                                                          \
         core::Attribute<T> &attribute = *m_IO.InquireAttribute<T>(name);       \
         int element_count = -1;                                                \
@@ -200,8 +201,8 @@ void SstWriter::FFSMarshalAttributes()
             data_addr = attribute.m_DataArray.data();                          \
         }                                                                      \
         SstFFSMarshalAttribute(m_Output, attribute.m_Name.c_str(),             \
-                               type.c_str(), sizeof(T), element_count,         \
-                               data_addr);                                     \
+                               ToString(type).c_str(), sizeof(T),              \
+                               element_count, data_addr);                      \
     }
 
         ADIOS2_FOREACH_ATTRIBUTE_PRIMITIVE_STDTYPE_1ARG(declare_type)

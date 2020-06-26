@@ -28,15 +28,16 @@ SscReader::SscReader(IO &io, const std::string &name, const Mode mode,
 {
     TAU_SCOPED_TIMER_FUNC();
 
-    ssc::GetParameter(m_IO.m_Parameters, "MpiMode", m_MpiMode);
-    ssc::GetParameter(m_IO.m_Parameters, "Verbose", m_Verbosity);
-    ssc::GetParameter(m_IO.m_Parameters, "MaxFilenameLength",
-                      m_MaxFilenameLength);
-    ssc::GetParameter(m_IO.m_Parameters, "RendezvousAppCount",
-                      m_RendezvousAppCount);
-    ssc::GetParameter(m_IO.m_Parameters, "MaxStreamsPerApp",
-                      m_MaxStreamsPerApp);
-    ssc::GetParameter(m_IO.m_Parameters, "OpenTimeoutSecs", m_OpenTimeoutSecs);
+    helper::GetParameter(m_IO.m_Parameters, "MpiMode", m_MpiMode);
+    helper::GetParameter(m_IO.m_Parameters, "Verbose", m_Verbosity);
+    helper::GetParameter(m_IO.m_Parameters, "MaxFilenameLength",
+                         m_MaxFilenameLength);
+    helper::GetParameter(m_IO.m_Parameters, "RendezvousAppCount",
+                         m_RendezvousAppCount);
+    helper::GetParameter(m_IO.m_Parameters, "MaxStreamsPerApp",
+                         m_MaxStreamsPerApp);
+    helper::GetParameter(m_IO.m_Parameters, "OpenTimeoutSecs",
+                         m_OpenTimeoutSecs);
 
     m_Buffer.resize(1);
 
@@ -55,13 +56,11 @@ void SscReader::GetOneSidedPostPush()
 {
     TAU_SCOPED_TIMER_FUNC();
     MPI_Win_post(m_MpiAllWritersGroup, 0, m_MpiWin);
-    MPI_Win_wait(m_MpiWin);
 }
 
 void SscReader::GetOneSidedFencePush()
 {
     TAU_SCOPED_TIMER_FUNC();
-    MPI_Win_fence(0, m_MpiWin);
     MPI_Win_fence(0, m_MpiWin);
 }
 
@@ -74,7 +73,6 @@ void SscReader::GetOneSidedPostPull()
         MPI_Get(m_Buffer.data() + i.second.first, i.second.second, MPI_CHAR,
                 i.first, 0, i.second.second, MPI_CHAR, m_MpiWin);
     }
-    MPI_Win_complete(m_MpiWin);
 }
 
 void SscReader::GetOneSidedFencePull()
@@ -86,21 +84,17 @@ void SscReader::GetOneSidedFencePull()
         MPI_Get(m_Buffer.data() + i.second.first, i.second.second, MPI_CHAR,
                 i.first, 0, i.second.second, MPI_CHAR, m_MpiWin);
     }
-    MPI_Win_fence(0, m_MpiWin);
 }
 
 void SscReader::GetTwoSided()
 {
     TAU_SCOPED_TIMER_FUNC();
-    std::vector<MPI_Request> requests;
     for (const auto &i : m_AllReceivingWriterRanks)
     {
-        requests.emplace_back();
+        m_MpiRequests.emplace_back();
         MPI_Irecv(m_Buffer.data() + i.second.first, i.second.second, MPI_CHAR,
-                  i.first, 0, m_StreamComm, &requests.back());
+                  i.first, 0, m_StreamComm, &m_MpiRequests.back());
     }
-    MPI_Status statuses[requests.size()];
-    MPI_Waitall(requests.size(), requests.data(), statuses);
 }
 
 StepStatus SscReader::BeginStep(const StepMode stepMode,
@@ -118,25 +112,79 @@ StepStatus SscReader::BeginStep(const StepMode stepMode,
     else
     {
         ++m_CurrentStep;
-        if (m_MpiMode == "TwoSided")
+        if (m_MpiMode == "twosided")
         {
-            GetTwoSided();
+            MPI_Status statuses[m_MpiRequests.size()];
+            MPI_Waitall(m_MpiRequests.size(), m_MpiRequests.data(), statuses);
+            m_MpiRequests.clear();
         }
-        else if (m_MpiMode == "OneSidedFencePush")
+        else if (m_MpiMode == "onesidedfencepush")
         {
-            GetOneSidedFencePush();
+            MPI_Win_fence(0, m_MpiWin);
         }
-        else if (m_MpiMode == "OneSidedPostPush")
+        else if (m_MpiMode == "onesidedpostpush")
         {
-            GetOneSidedPostPush();
+            MPI_Win_wait(m_MpiWin);
         }
-        else if (m_MpiMode == "OneSidedFencePull")
+        else if (m_MpiMode == "onesidedfencepull")
         {
-            GetOneSidedFencePull();
+            MPI_Win_fence(0, m_MpiWin);
         }
-        else if (m_MpiMode == "OneSidedPostPull")
+        else if (m_MpiMode == "onesidedpostpull")
         {
-            GetOneSidedPostPull();
+            MPI_Win_complete(m_MpiWin);
+        }
+    }
+
+    for (const auto &r : m_GlobalWritePattern)
+    {
+        for (auto &v : r)
+        {
+            if (v.shapeId == ShapeID::GlobalValue ||
+                v.shapeId == ShapeID::LocalValue)
+            {
+                std::vector<char> value(v.bufferCount);
+                if (m_CurrentStep == 0)
+                {
+                    std::memcpy(value.data(), v.value.data(), v.value.size());
+                }
+                else
+                {
+                    std::memcpy(value.data(), m_Buffer.data() + v.bufferStart,
+                                v.bufferCount);
+                }
+                if (v.type == DataType::None)
+                {
+                    throw(std::runtime_error("unknown data type"));
+                }
+                else if (v.type == DataType::String)
+                {
+                    auto variable = m_IO.InquireVariable<std::string>(v.name);
+                    if (variable)
+                    {
+                        variable->m_Value =
+                            std::string(value.begin(), value.end());
+                        variable->m_Min =
+                            std::string(value.begin(), value.end());
+                        variable->m_Max =
+                            std::string(value.begin(), value.end());
+                    }
+                }
+#define declare_type(T)                                                        \
+    else if (v.type == helper::GetDataType<T>())                               \
+    {                                                                          \
+        auto variable = m_IO.InquireVariable<T>(v.name);                       \
+        if (variable)                                                          \
+        {                                                                      \
+            std::memcpy(&variable->m_Min, value.data(), value.size());         \
+            std::memcpy(&variable->m_Max, value.data(), value.size());         \
+            std::memcpy(&variable->m_Value, value.data(), value.size());       \
+        }                                                                      \
+    }
+                ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
+#undef declare_type
+                else { throw(std::runtime_error("unknown data type")); }
+            }
         }
     }
 
@@ -174,10 +222,26 @@ void SscReader::EndStep()
         MPI_Win_create(m_Buffer.data(), m_Buffer.size(), 1, MPI_INFO_NULL,
                        m_StreamComm, &m_MpiWin);
     }
-    if (m_Verbosity >= 5)
+
+    if (m_MpiMode == "twosided")
     {
-        std::cout << "SscReader::EndStep, World Rank " << m_StreamRank
-                  << ", Reader Rank " << m_ReaderRank << std::endl;
+        GetTwoSided();
+    }
+    else if (m_MpiMode == "onesidedfencepush")
+    {
+        GetOneSidedFencePush();
+    }
+    else if (m_MpiMode == "onesidedpostpush")
+    {
+        GetOneSidedPostPush();
+    }
+    else if (m_MpiMode == "onesidedfencepull")
+    {
+        GetOneSidedFencePull();
+    }
+    else if (m_MpiMode == "onesidedpostpull")
+    {
+        GetOneSidedPostPull();
     }
 }
 
@@ -250,28 +314,8 @@ void SscReader::SyncWritePattern()
                   maxLocalSize, MPI_CHAR, m_StreamComm);
 
     // deserialize global metadata Json
-    try
-    {
-        for (size_t i = 0; i < m_StreamSize; ++i)
-        {
-            if (globalVec[i * maxLocalSize] == '\0')
-            {
-                m_GlobalWritePatternJson[i] = nullptr;
-            }
-            else
-            {
-                m_GlobalWritePatternJson[i] = nlohmann::json::parse(
-                    globalVec.begin() + i * maxLocalSize,
-                    globalVec.begin() + (i + 1) * maxLocalSize);
-            }
-        }
-    }
-    catch (std::exception &e)
-    {
-        throw(std::runtime_error(
-            std::string("corrupted global write pattern metadata, ") +
-            std::string(e.what())));
-    }
+    ssc::LocalJsonToGlobalJson(globalVec, maxLocalSize, m_StreamSize,
+                               m_GlobalWritePatternJson);
 
     // deserialize variables metadata
     ssc::JsonToBlockVecVec(m_GlobalWritePatternJson, m_GlobalWritePattern);
@@ -280,17 +324,39 @@ void SscReader::SyncWritePattern()
     {
         for (const auto &b : blockVec)
         {
-            if (b.type.empty())
+            if (b.type == DataType::None)
             {
                 throw(std::runtime_error("unknown data type"));
             }
 #define declare_type(T)                                                        \
-    else if (b.type == helper::GetType<T>())                                   \
+    else if (b.type == helper::GetDataType<T>())                               \
     {                                                                          \
         auto v = m_IO.InquireVariable<T>(b.name);                              \
         if (not v)                                                             \
         {                                                                      \
-            m_IO.DefineVariable<T>(b.name, b.shape, b.start, b.shape);         \
+            Dims vStart = b.start;                                             \
+            Dims vShape = b.shape;                                             \
+            if (!helper::IsRowMajor(m_IO.m_HostLanguage))                      \
+            {                                                                  \
+                std::reverse(vStart.begin(), vStart.end());                    \
+                std::reverse(vShape.begin(), vShape.end());                    \
+            }                                                                  \
+            if (b.shapeId == ShapeID::GlobalValue)                             \
+            {                                                                  \
+                m_IO.DefineVariable<T>(b.name);                                \
+            }                                                                  \
+            else if (b.shapeId == ShapeID::GlobalArray)                        \
+            {                                                                  \
+                m_IO.DefineVariable<T>(b.name, vShape, vStart, vShape);        \
+            }                                                                  \
+            else if (b.shapeId == ShapeID::LocalValue)                         \
+            {                                                                  \
+                m_IO.DefineVariable<T>(b.name, {adios2::LocalValueDim});       \
+            }                                                                  \
+            else if (b.shapeId == ShapeID::LocalArray)                         \
+            {                                                                  \
+                m_IO.DefineVariable<T>(b.name, {}, {}, vShape);                \
+            }                                                                  \
         }                                                                      \
     }
             ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
@@ -312,12 +378,13 @@ void SscReader::SyncWritePattern()
         }
         for (const auto &attributeJson : attributesJson)
         {
-            const std::string type(attributeJson["Type"].get<std::string>());
-            if (type.empty())
+            const DataType type(helper::GetDataTypeFromString(
+                attributeJson["Type"].get<std::string>()));
+            if (type == DataType::None)
             {
             }
 #define declare_type(T)                                                        \
-    else if (type == helper::GetType<T>())                                     \
+    else if (type == helper::GetDataType<T>())                                 \
     {                                                                          \
         const auto &attributesDataMap = m_IO.GetAttributesDataMap();           \
         auto it =                                                              \
@@ -393,8 +460,8 @@ void SscReader::SyncReadPattern()
     }
 
     ssc::JsonToBlockVecVec(m_GlobalWritePatternJson, m_GlobalWritePattern);
-    ssc::CalculateOverlap(m_GlobalWritePattern, m_LocalReadPattern);
-    m_AllReceivingWriterRanks = ssc::AllOverlapRanks(m_GlobalWritePattern);
+    m_AllReceivingWriterRanks =
+        ssc::CalculateOverlap(m_GlobalWritePattern, m_LocalReadPattern);
     CalculatePosition(m_GlobalWritePattern, m_AllReceivingWriterRanks);
     size_t totalDataSize = 0;
     for (auto i : m_AllReceivingWriterRanks)
@@ -435,7 +502,7 @@ void SscReader::CalculatePosition(ssc::BlockVecVec &bvv,
             {
                 b.bufferStart += bufferPosition;
             }
-            size_t currentRankTotalSize = TotalDataSize(bv);
+            size_t currentRankTotalSize = ssc::TotalDataSize(bv);
             allRanks[rank].second = currentRankTotalSize + 1;
             bufferPosition += currentRankTotalSize + 1;
         }
@@ -445,16 +512,12 @@ void SscReader::CalculatePosition(ssc::BlockVecVec &bvv,
 #define declare_type(T)                                                        \
     void SscReader::DoGetSync(Variable<T> &variable, T *data)                  \
     {                                                                          \
-        GetSyncCommon(variable, data);                                         \
+        GetDeferredCommon(variable, data);                                     \
+        PerformGets();                                                         \
     }                                                                          \
     void SscReader::DoGetDeferred(Variable<T> &variable, T *data)              \
     {                                                                          \
         GetDeferredCommon(variable, data);                                     \
-    }                                                                          \
-    std::map<size_t, std::vector<typename Variable<T>::Info>>                  \
-    SscReader::DoAllStepsBlocksInfo(const Variable<T> &variable) const         \
-    {                                                                          \
-        return AllStepsBlocksInfoCommon(variable);                             \
     }                                                                          \
     std::vector<typename Variable<T>::Info> SscReader::DoBlocksInfo(           \
         const Variable<T> &variable, const size_t step) const                  \

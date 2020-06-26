@@ -8,6 +8,7 @@
  *      Author: William F Godoy godoywf@ornl.gov
  */
 #include "FileFStream.h"
+#include <cstdio> // remove
 
 /// \cond EXCLUDE_FROM_DOXYGEN
 #include <ios> // std::ios_base::failure
@@ -18,8 +19,8 @@ namespace adios2
 namespace transport
 {
 
-FileFStream::FileFStream(helper::Comm const &comm, const bool debugMode)
-: Transport("File", "fstream", comm, debugMode)
+FileFStream::FileFStream(helper::Comm const &comm)
+: Transport("File", "fstream", comm)
 {
 }
 
@@ -102,6 +103,11 @@ void FileFStream::Open(const std::string &name, const Mode openMode,
 
 void FileFStream::SetBuffer(char *buffer, size_t size)
 {
+    if (!buffer && size != 0)
+    {
+        throw std::invalid_argument(
+            "buffer size must be 0 when using a NULL buffer");
+    }
     m_FileStream.rdbuf()->pubsetbuf(buffer, size);
     CheckFile("couldn't set buffer in file " + m_Name +
               ", in call to fstream rdbuf()->pubsetbuf");
@@ -215,6 +221,16 @@ void FileFStream::Close()
 
     CheckFile("couldn't close file " + m_Name + ", in call to fstream close");
     m_IsOpen = false;
+}
+
+void FileFStream::Delete()
+{
+    WaitForOpen();
+    if (m_IsOpen)
+    {
+        Close();
+    }
+    std::remove(m_Name.c_str());
 }
 
 void FileFStream::CheckFile(const std::string hint) const

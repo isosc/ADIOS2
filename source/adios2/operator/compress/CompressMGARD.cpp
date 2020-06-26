@@ -23,41 +23,35 @@ namespace core
 namespace compress
 {
 
-CompressMGARD::CompressMGARD(const Params &parameters, const bool debugMode)
-: Operator("mgard", parameters, debugMode)
+CompressMGARD::CompressMGARD(const Params &parameters)
+: Operator("mgard", parameters)
 {
 }
 
 size_t CompressMGARD::Compress(const void *dataIn, const Dims &dimensions,
-                               const size_t elementSize, const std::string type,
+                               const size_t elementSize, DataType type,
                                void *bufferOut, const Params &parameters,
                                Params &info) const
 {
     const size_t ndims = dimensions.size();
-    if (m_DebugMode)
+
+    if (ndims > 3)
     {
-        if (ndims > 3)
-        {
-            throw std::invalid_argument(
-                "ERROR: ADIOS2 MGARD compression: no more "
-                "than 3-dimensions is supported.\n");
-        }
+        throw std::invalid_argument("ERROR: ADIOS2 MGARD compression: no more "
+                                    "than 3-dimensions is supported.\n");
     }
 
     // set type
     int mgardType = -1;
-    if (type == helper::GetType<double>())
+    if (type == helper::GetDataType<double>())
     {
         mgardType = 1;
     }
     else
     {
-        if (m_DebugMode)
-        {
-            throw std::invalid_argument(
-                "ERROR: ADIOS2 operator "
-                "MGARD only supports double precision, in call to Put\n");
-        }
+        throw std::invalid_argument(
+            "ERROR: ADIOS2 operator "
+            "MGARD only supports double precision, in call to Put\n");
     }
 
     int r[3];
@@ -110,26 +104,23 @@ size_t CompressMGARD::Compress(const void *dataIn, const Dims &dimensions,
 
 size_t CompressMGARD::Decompress(const void *bufferIn, const size_t sizeIn,
                                  void *dataOut, const Dims &dimensions,
-                                 const std::string type,
+                                 DataType type,
                                  const Params & /*parameters*/) const
 {
     int mgardType = -1;
     size_t elementSize = 0;
     double quantizer = 0.0;
 
-    if (type == helper::GetType<double>())
+    if (type == helper::GetDataType<double>())
     {
         mgardType = 1;
         elementSize = 8;
     }
     else
     {
-        if (m_DebugMode)
-        {
-            throw std::invalid_argument(
-                "ERROR: ADIOS2 operator "
-                "MGARD only supports double precision, in call to Get\n");
-        }
+        throw std::invalid_argument(
+            "ERROR: ADIOS2 operator "
+            "MGARD only supports double precision, in call to Get\n");
     }
 
     const size_t ndims = dimensions.size();

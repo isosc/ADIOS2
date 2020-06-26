@@ -26,9 +26,8 @@ class CompressBZIP2 : public Operator
 public:
     /**
      * Unique constructor
-     * @param debugMode
      */
-    CompressBZIP2(const Params &parameters, const bool debugMode);
+    CompressBZIP2(const Params &parameters);
 
     ~CompressBZIP2() = default;
 
@@ -44,9 +43,8 @@ public:
      * @return size of compressed buffer in bytes
      */
     size_t Compress(const void *dataIn, const Dims &dimensions,
-                    const size_t elementSize, const std::string type,
-                    void *bufferOut, const Params &parameters,
-                    Params &info) const final;
+                    const size_t elementSize, DataType type, void *bufferOut,
+                    const Params &parameters, Params &info) const final;
 
     using Operator::Decompress;
     /**
@@ -63,8 +61,7 @@ public:
 
 private:
     /**
-     * In debug mode, check status from BZip compression and decompression
-     * functions
+     * check status from BZip compression and decompression functions
      * @param status returned by BZip2 library
      * @param hint extra exception information
      */

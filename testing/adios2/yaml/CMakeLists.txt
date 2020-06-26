@@ -3,17 +3,10 @@
 # accompanying file Copyright.txt for details.
 #------------------------------------------------------------------------------#
 
-gtest_add_tests_helper(YAMLConfig ${test_mpi} "" "" "")
-if(ADIOS2_HAVE_MPI)
-  gtest_add_tests_helper(YAMLConfigSerial NOEXEC "" "" "")
-else()
-  gtest_add_tests_helper(YAMLConfigSerial FALSE "" "" "")
-endif()
+gtest_add_tests_helper(YAMLConfig MPI_ALLOW "" "" "")
 
-target_compile_definitions(Test.YAMLConfig PRIVATE
-  "YAML_CONFIG_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
-)
-
-target_compile_definitions(Test.YAMLConfigSerial PRIVATE
-  "YAML_CONFIG_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
-)
+foreach(tgt IN LISTS Test.YAMLConfig-TARGETS)
+  target_compile_definitions(${tgt} PRIVATE
+    "YAML_CONFIG_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+  )
+endforeach()

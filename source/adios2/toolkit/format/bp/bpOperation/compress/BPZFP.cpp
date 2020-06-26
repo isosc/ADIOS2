@@ -12,6 +12,7 @@
 #include "BPZFP.tcc"
 
 #include "adios2/helper/adiosFunctions.h"
+#include "adios2/helper/adiosType.h"
 
 #ifdef ADIOS2_HAVE_ZFP
 #include "adios2/operator/compress/CompressZFP.h"
@@ -87,10 +88,11 @@ void BPZFP::GetData(const char *input,
                     char *dataOutput) const
 {
 #ifdef ADIOS2_HAVE_ZFP
-    core::compress::CompressZFP op(Params(), true);
+    core::compress::CompressZFP op((Params()));
     op.Decompress(input, blockOperationInfo.PayloadSize, dataOutput,
                   blockOperationInfo.PreCount,
-                  blockOperationInfo.Info.at("PreDataType"),
+                  helper::GetDataTypeFromString(
+                      blockOperationInfo.Info.at("PreDataType")),
                   blockOperationInfo.Info);
 #else
     throw std::runtime_error(

@@ -11,7 +11,6 @@
 #ifndef UTILS_REORGANIZE_REORGANIZE_H_
 #define UTILS_REORGANIZE_REORGANIZE_H_
 
-#include "adios2.h"
 #include "adios2/core/IO.h" // DataMap
 #include "adios2/helper/adiosComm.h"
 #include "utils/Utils.h"
@@ -21,7 +20,7 @@ namespace adios2
 namespace utils
 {
 
-typedef struct
+struct VarInfo
 {
     core::VariableBase *v = nullptr;
     std::string type;
@@ -29,7 +28,7 @@ typedef struct
     Dims count;
     size_t writesize = 0; // size of subset this process writes, 0: do not write
     void *readbuf = nullptr; // read in buffer
-} VarInfo;
+};
 
 class Reorganize : public Utils
 {

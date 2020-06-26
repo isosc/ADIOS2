@@ -48,10 +48,9 @@ public:
      * Base constructor that all derived classes pass
      * @param type from derived class
      * @param comm passed to m_Comm
-     * @param debugMode passed to m_DebugMode
      */
     Transport(const std::string type, const std::string library,
-              helper::Comm const &comm, const bool debugMode);
+              helper::Comm const &comm);
 
     virtual ~Transport() = default;
 
@@ -73,6 +72,12 @@ public:
      * @param size of OS buffer
      */
     virtual void SetBuffer(char *buffer, size_t size);
+
+    /**
+     * Set transport parameters
+     * @param parameters transport parameters to set
+     */
+    virtual void SetParameters(const Params &parameters);
 
     /**
      * Writes to transport. Note that size is non-const due to the nature of
@@ -115,14 +120,14 @@ public:
     /** closes current file, after this file becomes unreachable */
     virtual void Close() = 0;
 
+    /** deletes current file, after this file becomes unreachable */
+    virtual void Delete() = 0;
+
     virtual void SeekToEnd() = 0;
 
     virtual void SeekToBegin() = 0;
 
 protected:
-    /** true: turn on exceptions */
-    const bool m_DebugMode = false;
-
     virtual void MkDir(const std::string &fileName);
 
     void ProfilerStart(const std::string process) noexcept;

@@ -60,9 +60,9 @@ namespace core
 {
 
 ADIOS::ADIOS(const std::string configFile, helper::Comm comm,
-             const bool debugMode, const std::string hostLanguage)
-: m_ConfigFile(configFile), m_DebugMode(debugMode),
-  m_HostLanguage(hostLanguage), m_Comm(std::move(comm))
+             const std::string hostLanguage)
+: m_ConfigFile(configFile), m_HostLanguage(hostLanguage),
+  m_Comm(std::move(comm))
 {
     if (!configFile.empty())
     {
@@ -83,20 +83,18 @@ ADIOS::ADIOS(const std::string configFile, helper::Comm comm,
     }
 }
 
-ADIOS::ADIOS(const std::string configFile, const bool debugMode,
-             const std::string hostLanguage)
-: ADIOS(configFile, helper::CommDummy(), debugMode, hostLanguage)
+ADIOS::ADIOS(const std::string configFile, const std::string hostLanguage)
+: ADIOS(configFile, helper::CommDummy(), hostLanguage)
 {
 }
 
-ADIOS::ADIOS(helper::Comm comm, const bool debugMode,
-             const std::string hostLanguage)
-: ADIOS("", std::move(comm), debugMode, hostLanguage)
+ADIOS::ADIOS(helper::Comm comm, const std::string hostLanguage)
+: ADIOS("", std::move(comm), hostLanguage)
 {
 }
 
-ADIOS::ADIOS(const bool debugMode, const std::string hostLanguage)
-: ADIOS("", helper::CommDummy(), debugMode, hostLanguage)
+ADIOS::ADIOS(const std::string hostLanguage)
+: ADIOS("", helper::CommDummy(), hostLanguage)
 {
 }
 
@@ -117,19 +115,15 @@ IO &ADIOS::DeclareIO(const std::string name)
         }
         else
         {
-            if (m_DebugMode)
-            {
-                throw std::invalid_argument(
-                    "ERROR: IO with name " + name +
-                    " previously declared with DeclareIO, name must be "
-                    "unique,"
-                    " in call to DeclareIO\n");
-            }
+            throw std::invalid_argument(
+                "ERROR: IO with name " + name +
+                " previously declared with DeclareIO, name must be "
+                "unique,"
+                " in call to DeclareIO\n");
         }
     }
 
-    auto ioPair = m_IOs.emplace(
-        name, IO(*this, name, false, m_HostLanguage, m_DebugMode));
+    auto ioPair = m_IOs.emplace(name, IO(*this, name, false, m_HostLanguage));
     IO &io = ioPair.first->second;
     io.SetDeclared();
     return io;
@@ -184,8 +178,7 @@ Operator &ADIOS::DefineOperator(const std::string &name, const std::string type,
     {
 #ifdef ADIOS2_HAVE_BZIP2
         auto itPair = m_Operators.emplace(
-            name,
-            std::make_shared<compress::CompressBZIP2>(parameters, m_DebugMode));
+            name, std::make_shared<compress::CompressBZIP2>(parameters));
         operatorPtr = itPair.first->second;
 #else
         throw std::invalid_argument(lf_ErrorMessage("BZip2"));
@@ -195,8 +188,7 @@ Operator &ADIOS::DefineOperator(const std::string &name, const std::string type,
     {
 #ifdef ADIOS2_HAVE_ZFP
         auto itPair = m_Operators.emplace(
-            name,
-            std::make_shared<compress::CompressZFP>(parameters, m_DebugMode));
+            name, std::make_shared<compress::CompressZFP>(parameters));
         operatorPtr = itPair.first->second;
 #else
         throw std::invalid_argument(lf_ErrorMessage("ZFP"));
@@ -206,8 +198,7 @@ Operator &ADIOS::DefineOperator(const std::string &name, const std::string type,
     {
 #ifdef ADIOS2_HAVE_SZ
         auto itPair = m_Operators.emplace(
-            name,
-            std::make_shared<compress::CompressSZ>(parameters, m_DebugMode));
+            name, std::make_shared<compress::CompressSZ>(parameters));
         operatorPtr = itPair.first->second;
 #else
         throw std::invalid_argument(lf_ErrorMessage("SZ"));
@@ -217,8 +208,7 @@ Operator &ADIOS::DefineOperator(const std::string &name, const std::string type,
     {
 #ifdef ADIOS2_HAVE_MGARD
         auto itPair = m_Operators.emplace(
-            name,
-            std::make_shared<compress::CompressMGARD>(parameters, m_DebugMode));
+            name, std::make_shared<compress::CompressMGARD>(parameters));
         operatorPtr = itPair.first->second;
 #else
         throw std::invalid_argument(lf_ErrorMessage("MGARD"));
@@ -228,8 +218,7 @@ Operator &ADIOS::DefineOperator(const std::string &name, const std::string type,
     {
 #ifdef ADIOS2_HAVE_PNG
         auto itPair = m_Operators.emplace(
-            name,
-            std::make_shared<compress::CompressPNG>(parameters, m_DebugMode));
+            name, std::make_shared<compress::CompressPNG>(parameters));
         operatorPtr = itPair.first->second;
 #else
         throw std::invalid_argument(lf_ErrorMessage("PNG"));
@@ -239,8 +228,7 @@ Operator &ADIOS::DefineOperator(const std::string &name, const std::string type,
     {
 #ifdef ADIOS2_HAVE_BLOSC
         auto itPair = m_Operators.emplace(
-            name,
-            std::make_shared<compress::CompressBlosc>(parameters, m_DebugMode));
+            name, std::make_shared<compress::CompressBlosc>(parameters));
         operatorPtr = itPair.first->second;
 #else
         throw std::invalid_argument(lf_ErrorMessage("Blosc"));
@@ -248,15 +236,12 @@ Operator &ADIOS::DefineOperator(const std::string &name, const std::string type,
     }
     else
     {
-        if (m_DebugMode)
-        {
-            throw std::invalid_argument(
-                "ERROR: Operator " + name + " of type " + type +
-                " is not supported by ADIOS2, in call to DefineOperator\n");
-        }
+        throw std::invalid_argument(
+            "ERROR: Operator " + name + " of type " + type +
+            " is not supported by ADIOS2, in call to DefineOperator\n");
     }
 
-    if (m_DebugMode && !operatorPtr)
+    if (!operatorPtr)
     {
         throw std::invalid_argument(
             "ERROR: Operator " + name + " of type " + type +
@@ -287,8 +272,7 @@ Operator *ADIOS::InquireOperator(const std::string &name) noexcept
     {                                                                          \
         CheckOperator(name);                                                   \
         std::shared_ptr<Operator> callbackOperator =                           \
-            std::make_shared<callback::Signature1>(function, parameters,       \
-                                                   m_DebugMode);               \
+            std::make_shared<callback::Signature1>(function, parameters);      \
                                                                                \
         auto itPair = m_Operators.emplace(name, std::move(callbackOperator));  \
         return *itPair.first->second;                                          \
@@ -306,8 +290,7 @@ Operator &ADIOS::DefineCallBack(
 {
     CheckOperator(name);
     std::shared_ptr<Operator> callbackOperator =
-        std::make_shared<callback::Signature2>(function, parameters,
-                                               m_DebugMode);
+        std::make_shared<callback::Signature2>(function, parameters);
 
     auto itPair = m_Operators.emplace(name, std::move(callbackOperator));
     return *itPair.first->second;
@@ -328,16 +311,13 @@ void ADIOS::RemoveAllIOs() noexcept { m_IOs.clear(); }
 // PRIVATE FUNCTIONS
 void ADIOS::CheckOperator(const std::string name) const
 {
-    if (m_DebugMode)
+    if (m_Operators.count(name) == 1)
     {
-        if (m_Operators.count(name) == 1)
-        {
-            throw std::invalid_argument(
-                "ERROR: Operator with name " + name +
-                ", is already defined in either config file "
-                "or with call to DefineOperator, name must "
-                "be unique, in call to DefineOperator\n");
-        }
+        throw std::invalid_argument(
+            "ERROR: Operator with name " + name +
+            ", is already defined in either config file "
+            "or with call to DefineOperator, name must "
+            "be unique, in call to DefineOperator\n");
     }
 }
 

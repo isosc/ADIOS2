@@ -9,25 +9,62 @@
 # them, otherwise we disable it.  If explicitly ON then a failure to find
 # dependencies is an error,
 
-# Helper function to strip a common prefix off an input string
-function(string_strip_prefix in0 in1 outVar)
+# Helper function to extract a common prefix from two strings
+function(string_get_prefix in0 in1 outVar)
   string(LENGTH "${in0}" len0)
   string(LENGTH "${in1}" len1)
   set(lenMax ${len0})
   if(len1 LESS len0)
     set(lenMax ${len1})
   endif()
-  set(idxNoPfx 0)
-  foreach(len RANGE 1 ${lenMax})
-    string(SUBSTRING "${in0}" 1 ${len} sub0)
-    string(SUBSTRING "${in1}" 1 ${len} sub1)
-    set(idxNoPfx ${len})
-    if(NOT (sub0 STREQUAL sub1))
-      break()
-    endif()
-  endforeach()
-  string(SUBSTRING "${in0}" ${idxNoPfx} ${len0} outTmp)
+  set(lenPfx 0)
+  if(lenMax GREATER 0)
+    foreach(len RANGE 1 ${lenMax})
+      string(SUBSTRING "${in0}" 0 ${len} sub0)
+      string(SUBSTRING "${in1}" 0 ${len} sub1)
+      if(NOT (sub0 STREQUAL sub1))
+        break()
+      endif()
+      set(lenPfx ${len})
+    endforeach()
+  endif()
+  string(SUBSTRING "${in0}" 0 ${lenPfx} outTmp)
   set(${outVar} "${outTmp}" PARENT_SCOPE)
+endfunction()
+
+# Helper function to strip a common prefix off an input string
+function(string_strip_prefix pfx in outVar)
+  string(LENGTH "${pfx}" lenPfx)
+  string(LENGTH "${in}" lenIn)
+  if(lenPfx GREATER lenIn)
+    set(${outVar} "" PARENT_SCOPE)
+    return()
+  endif()
+  string(SUBSTRING "${in}" 0 ${lenPfx} inPfx)
+  if(NOT pfx STREQUAL inPfx)
+    set(${outVar} "" PARENT_SCOPE)
+    return()
+  endif()
+  string(SUBSTRING "${in}" ${lenPfx} -1 outTmp)
+  set(${outVar} "${outTmp}" PARENT_SCOPE)
+endfunction()
+
+# Extract the common prefix from a collection of variables
+function(lists_get_prefix listVars outVar)
+  foreach(l IN LISTS listVars)
+    foreach(d IN LISTS ${l})
+      if(NOT prefix)
+        set(prefix "${d}")
+        continue()
+      endif()
+      string_get_prefix("${prefix}" "${d}" prefix)
+      if(NOT prefix)
+        set(${outVar} "" PARENT_SCOPE)
+        return()
+      endif()
+    endforeach()
+  endforeach()
+  set(${outVar} "${prefix}" PARENT_SCOPE)
 endfunction()
 
 # Blosc
@@ -187,6 +224,17 @@ elseif(ADIOS2_USE_HDF5)
   set(ADIOS2_HAVE_HDF5 TRUE)
 endif()
 
+# IME
+if(ADIOS2_USE_IME STREQUAL AUTO)
+  find_package(IME)
+elseif(ADIOS2_USE_IME)
+  find_package(IME REQUIRED)
+endif()
+if(IME_FOUND)
+  set(ADIOS2_HAVE_IME TRUE)
+endif()
+
+
 # Python
 
 # Not supported on PGI
@@ -237,8 +285,13 @@ endif()
 
 if(Python_Interpreter_FOUND)
   # Setup output directories
+  if(Python_Development_FOUND)
+    lists_get_prefix("Python_INCLUDE_DIRS;Python_LIBRARIES;Python_SITEARCH" _Python_DEVPREFIX)
+  else()
+    lists_get_prefix("Python_EXECUTABLE;Python_SITEARCH" _Python_DEVPREFIX)
+  endif()
   string_strip_prefix(
-    "${Python_SITEARCH}" "${Python_EXECUTABLE}" CMAKE_INSTALL_PYTHONDIR_DEFAULT
+    "${_Python_DEVPREFIX}" "${Python_SITEARCH}" CMAKE_INSTALL_PYTHONDIR_DEFAULT
   )
   set(CMAKE_INSTALL_PYTHONDIR "${CMAKE_INSTALL_PYTHONDIR_DEFAULT}"
     CACHE PATH "Install directory for python modules"
@@ -297,3 +350,20 @@ endif()
 
 # Multithreading
 find_package(Threads REQUIRED)
+
+# Floating point detection
+include(CheckTypeRepresentation)
+
+#check_float_type_representation(float FLOAT_TYPE_C)
+#check_float_type_representation(double DOUBLE_TYPE_C)
+#check_float_type_representation("long double" LONG_DOUBLE_TYPE_C)
+
+if(ADIOS2_USE_Fortran)
+  #check_float_type_representation(real REAL_TYPE_Fortran LANGUAGE Fortran)
+  #check_float_type_representation("real(kind=4)" REAL4_TYPE_Fortran LANGUAGE Fortran)
+  #check_float_type_representation("real(kind=8)" REAL8_TYPE_Fortran LANGUAGE Fortran)
+  #check_float_type_representation("real(kind=16)" REAL16_TYPE_Fortran LANGUAGE Fortran)
+
+  include(CheckFortranCompilerFlag)
+  check_fortran_compiler_flag("-fallow-argument-mismatch" ADIOS2_USE_Fortran_flag_argument_mismatch)
+endif()

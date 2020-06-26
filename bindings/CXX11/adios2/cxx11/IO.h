@@ -16,7 +16,7 @@
 #include "Operator.h"
 #include "Variable.h"
 
-#ifdef ADIOS2_HAVE_MPI
+#if ADIOS2_USE_MPI
 #include <mpi.h>
 #endif
 
@@ -174,7 +174,7 @@ public:
      * used if variableName is empty.
      * @return object reference to internal Attribute in IO
      * @exception std::invalid_argument if Attribute with unique name (in IO or
-     * Variable) is already defined, in debug mode only
+     * Variable) is already defined
      */
     template <class T>
     Attribute<T> DefineAttribute(const std::string &name, const T *data,
@@ -194,7 +194,7 @@ public:
      * used if variableName is empty.
      * @return object reference to internal Attribute in IO
      * @exception std::invalid_argument if Attribute with unique name (in IO or
-     * Variable) is already defined, in debug mode only
+     * Variable) is already defined
      */
     template <class T>
     Attribute<T> DefineAttribute(const std::string &name, const T &value,
@@ -257,7 +257,7 @@ public:
      */
     Engine Open(const std::string &name, const Mode mode);
 
-#ifdef ADIOS2_HAVE_MPI
+#if ADIOS2_USE_MPI
     /**
      * Open an Engine to start heavy-weight input/output operations.
      * This version allows passing a MPI communicator different from the one
@@ -322,8 +322,8 @@ public:
      * Inspects attribute type. This function can be used in conjunction with
      * MACROS in an else if (type == adios2::GetType<T>() ) {} loop
      * @param name unique attribute name identifier in current IO
-     * @return type as in adios2::GetType<T>() (e.g. "double", "float"), empty
-     * std::string if attribute not found
+     * @return type as in adios2::GetType<T>() (e.g. "double", "float"),
+     * empty std::string if attribute not found
      */
     std::string AttributeType(const std::string &name) const;
 

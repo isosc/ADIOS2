@@ -21,16 +21,18 @@ adios2_adios *adios2_init_config_glue_serial(const char *config_file,
                                              const adios2_debug_mode debug_mode,
                                              const char *host_language)
 {
+    // The debug_mode argument is no longer used, but kept in the public
+    // API for compatibility.
+    static_cast<void>(debug_mode);
+
     adios2_adios *adios = nullptr;
     try
     {
         adios2::helper::CheckForNullptr(
             config_file,
             "for config_file, in call to adios2_init or adios2_init_config");
-        const bool debugBool =
-            (debug_mode == adios2_debug_mode_on) ? true : false;
         adios = reinterpret_cast<adios2_adios *>(
-            new adios2::core::ADIOS(config_file, debugBool, host_language));
+            new adios2::core::ADIOS(config_file, host_language));
     }
     catch (...)
     {
@@ -39,15 +41,14 @@ adios2_adios *adios2_init_config_glue_serial(const char *config_file,
     return adios;
 }
 
-adios2_adios *adios2_init_serial(const adios2_debug_mode debug_mode)
+adios2_adios *adios2_init_serial()
 {
-    return adios2_init_config_serial("", debug_mode);
+    return adios2_init_config_glue_serial("", adios2_debug_mode_off, "C");
 }
 
-adios2_adios *adios2_init_config_serial(const char *config_file,
-                                        const adios2_debug_mode debug_mode)
+adios2_adios *adios2_init_config_serial(const char *config_file)
 {
-    return adios2_init_config_glue_serial("", debug_mode, "C");
+    return adios2_init_config_glue_serial("", adios2_debug_mode_off, "C");
 }
 
 adios2_io *adios2_declare_io(adios2_adios *adios, const char *name)

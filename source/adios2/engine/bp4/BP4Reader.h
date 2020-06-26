@@ -70,17 +70,38 @@ private:
     transportman::TransportMan m_MDIndexFileManager;
     size_t m_MDIndexFileProcessedSize = 0;
 
+    /* transport manager for managing the active flag file */
+    transportman::TransportMan m_ActiveFlagFileManager;
+    bool m_WriterIsActive = true;
+
     /** used for per-step reads, TODO: to be moved to BP4Deserializer */
     size_t m_CurrentStep = 0;
     bool m_FirstStep = true;
+    bool m_IdxHeaderParsed = false; // true after first index parsing
 
     void Init();
     void InitTransports();
 
+    /* Sleep up to pollSeconds time if we have not reached timeoutInstant.
+     * Return true if slept
+     * return false if sleep was not needed because it was overtime
+     */
+    bool SleepOrQuit(const TimePoint &timeoutInstant,
+                     const Seconds &pollSeconds);
+    /** Open one category of files within timeout.
+     * @return: 0 = OK, 1 = timeout, 2 = error
+     * lasterrmsg contains the error message in case of error
+     */
+    size_t OpenWithTimeout(transportman::TransportMan &tm,
+                           const std::vector<std::string> &fileNames,
+                           const TimePoint &timeoutInstant,
+                           const Seconds &pollSeconds,
+                           std::string &lasterrmsg /*INOUT*/);
+
     /** Open files within timeout.
      * @return True if files are opened, False in case of timeout
      */
-    void OpenFiles(const TimePoint &timeoutInstant, const Seconds &pollSeconds,
+    void OpenFiles(TimePoint &timeoutInstant, const Seconds &pollSeconds,
                    const Seconds &timeoutSeconds);
     void InitBuffer(const TimePoint &timeoutInstant, const Seconds &pollSeconds,
                     const Seconds &timeoutSeconds);
@@ -97,9 +118,9 @@ private:
      */
     void ProcessMetadataForNewSteps(const size_t newIdxSize);
 
-    /** Check the active status flag in index file.
-     *  @return true if writer is still active
-     *  it sets BP4Deserialized.m_WriterIsActive
+    /** Check the active status of the writer.
+     *  @return true if writer is still active.
+     *  It sets m_WriterIsActive.
      */
     bool CheckWriterActive();
 

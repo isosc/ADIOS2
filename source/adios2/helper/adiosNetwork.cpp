@@ -13,7 +13,7 @@
 #include "adios2/toolkit/transport/file/FileFStream.h"
 
 #ifndef _WIN32
-#if defined(ADIOS2_HAVE_DATAMAN) || defined(ADIOS2_HAVE_SSC)
+#if defined(ADIOS2_HAVE_DATAMAN) || defined(ADIOS2_HAVE_TABLE)
 
 #include <iostream>
 #include <thread>
@@ -107,7 +107,7 @@ void HandshakeWriter(Comm const &comm, size_t &appID,
     // Check total number of writer apps
     if (mpiRank == 0)
     {
-        transport::FileFStream lockCheck(comm, false);
+        transport::FileFStream lockCheck(comm);
         while (true)
         {
             try
@@ -120,10 +120,10 @@ void HandshakeWriter(Comm const &comm, size_t &appID,
                 break;
             }
         }
-        transport::FileFStream lockWrite(comm, false);
+        transport::FileFStream lockWrite(comm);
         lockWrite.Open(globalLockFilename, Mode::Write);
 
-        transport::FileFStream numRead(comm, false);
+        transport::FileFStream numRead(comm);
         try
         {
             numRead.Open(globalFilename, Mode::Read);
@@ -137,7 +137,7 @@ void HandshakeWriter(Comm const &comm, size_t &appID,
         catch (...)
         {
         }
-        transport::FileFStream numWrite(comm, false);
+        transport::FileFStream numWrite(comm);
         numWrite.Open(globalFilename, Mode::Write);
         std::string numAppsString = std::to_string(appID);
         numWrite.Write(numAppsString.data(), numAppsString.size());
@@ -182,9 +182,9 @@ void HandshakeWriter(Comm const &comm, size_t &appID,
             }
         }
         std::string globalAddressesStr = globalAddressesJson.dump();
-        transport::FileFStream lockstream(comm, false);
+        transport::FileFStream lockstream(comm);
         lockstream.Open(engineLockFilename, Mode::Write);
-        transport::FileFStream ipstream(comm, false);
+        transport::FileFStream ipstream(comm);
         ipstream.Open(engineFilename, Mode::Write);
         ipstream.Write(globalAddressesStr.data(), globalAddressesStr.size());
         ipstream.Close();
@@ -212,7 +212,7 @@ void HandshakeReader(Comm const &comm, size_t &appID,
     }
     comm.BroadcastValue(appID);
 
-    transport::FileFStream ipstream(comm, false);
+    transport::FileFStream ipstream(comm);
     while (true)
     {
         try
@@ -226,7 +226,7 @@ void HandshakeReader(Comm const &comm, size_t &appID,
         }
     }
 
-    transport::FileFStream lockstream(comm, false);
+    transport::FileFStream lockstream(comm);
     while (true)
     {
         try

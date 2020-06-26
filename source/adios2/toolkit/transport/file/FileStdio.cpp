@@ -11,6 +11,8 @@
 #include "FileStdio.h"
 
 /// \cond EXCLUDE_FROM_DOXYGEN
+#include <cerrno>
+#include <cstring>
 #include <ios> //std::ios_base::failure
 /// \endcond
 
@@ -24,8 +26,8 @@ namespace adios2
 namespace transport
 {
 
-FileStdio::FileStdio(helper::Comm const &comm, const bool debugMode)
-: Transport("File", "stdio", comm, debugMode)
+FileStdio::FileStdio(helper::Comm const &comm)
+: Transport("File", "stdio", comm)
 {
 }
 
@@ -50,6 +52,10 @@ void FileStdio::WaitForOpen()
             "couldn't open file " + m_Name +
             ", check permissions or path existence, in call to POSIX open");
         m_IsOpen = true;
+        if (m_DelayedBufferSet)
+        {
+            SetBuffer(m_DelayedBuffer, m_DelayedBufferSize);
+        }
     }
 }
 
@@ -57,6 +63,7 @@ void FileStdio::Open(const std::string &name, const Mode openMode,
                      const bool async)
 {
     auto lf_AsyncOpenWrite = [&](const std::string &name) -> FILE * {
+        errno = 0;
         return std::fopen(name.c_str(), "wb");
     };
     m_Name = name;
@@ -74,20 +81,23 @@ void FileStdio::Open(const std::string &name, const Mode openMode,
         }
         else
         {
+            errno = 0;
             m_File = std::fopen(name.c_str(), "wb");
         }
         break;
     case (Mode::Append):
+        errno = 0;
         m_File = std::fopen(name.c_str(), "rwb");
         // m_File = std::fopen(name.c_str(), "a+b");
         std::fseek(m_File, 0, SEEK_END);
         break;
     case (Mode::Read):
+        errno = 0;
         m_File = std::fopen(name.c_str(), "rb");
         break;
     default:
-        CheckFile("unknown open mode for file " + m_Name +
-                  ", in call to stdio fopen");
+        throw std::ios_base::failure("ERROR: unknown open mode for file " +
+                                     m_Name + ", in call to stdio fopen");
     }
 
     if (!m_IsOpening)
@@ -101,9 +111,33 @@ void FileStdio::Open(const std::string &name, const Mode openMode,
 
 void FileStdio::SetBuffer(char *buffer, size_t size)
 {
-    const int status = std::setvbuf(m_File, buffer, _IOFBF, size);
+    if (!m_File)
+    {
+        m_DelayedBufferSet = true;
+        m_DelayedBuffer = buffer;
+        m_DelayedBufferSize = size;
+        return;
+    }
+    m_DelayedBufferSet = false;
+    m_DelayedBuffer = nullptr;
+    m_DelayedBufferSize = 0;
 
-    if (!status)
+    int status;
+    if (buffer)
+    {
+        status = std::setvbuf(m_File, buffer, _IOFBF, size);
+    }
+    else
+    {
+        if (size != 0)
+        {
+            throw std::invalid_argument(
+                "buffer size must be 0 when using a NULL buffer");
+        }
+        status = std::setvbuf(m_File, NULL, _IONBF, 0);
+    }
+
+    if (status)
     {
         throw std::ios_base::failure(
             "ERROR: could not set FILE* buffer in file " + m_Name +
@@ -268,9 +302,28 @@ void FileStdio::Close()
     m_IsOpen = false;
 }
 
+void FileStdio::Delete()
+{
+    WaitForOpen();
+    if (m_IsOpen)
+    {
+        Close();
+    };
+    std::remove(m_Name.c_str());
+}
+
 void FileStdio::CheckFile(const std::string hint) const
 {
-    if (std::ferror(m_File))
+    if (!m_File)
+    {
+        std::string errmsg;
+        if (errno)
+        {
+            errmsg = std::strerror(errno);
+        }
+        throw std::ios_base::failure("ERROR: " + hint + ":" + errmsg + "\n");
+    }
+    else if (std::ferror(m_File))
     {
         throw std::ios_base::failure("ERROR: " + hint + "\n");
     }

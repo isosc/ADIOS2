@@ -3,17 +3,10 @@
 # accompanying file Copyright.txt for details.
 #------------------------------------------------------------------------------#
 
-gtest_add_tests_helper(XMLConfig ${test_mpi} "" "" "")
-if(ADIOS2_HAVE_MPI)
-  gtest_add_tests_helper(XMLConfigSerial NOEXEC "" "" "")
-else()
-  gtest_add_tests_helper(XMLConfigSerial FALSE "" "" "")
-endif()
+gtest_add_tests_helper(XMLConfig MPI_ALLOW "" "" "")
 
-target_compile_definitions(Test.XMLConfig PRIVATE
-  "XML_CONFIG_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
-)
-
-target_compile_definitions(Test.XMLConfigSerial PRIVATE
-  "XML_CONFIG_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
-)
+foreach(tgt IN LISTS Test.XMLConfig-TARGETS)
+  target_compile_definitions(${tgt} PRIVATE
+    "XML_CONFIG_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+  )
+endforeach()

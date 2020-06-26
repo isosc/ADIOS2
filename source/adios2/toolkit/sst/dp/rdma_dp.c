@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "adios2/common/ADIOSConfig.h"
 #include <atl.h>
@@ -16,10 +17,24 @@
 #include <rdma/fi_endpoint.h>
 #include <rdma/fi_rma.h>
 
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define NO_SANITIZE_THREAD __attribute__((no_sanitize("thread")))
+#endif
+#endif
+
+#ifndef NO_SANITIZE_THREAD
+#define NO_SANITIZE_THREAD
+#endif
+
 #ifdef SST_HAVE_FI_GNI
 #include <rdma/fi_ext_gni.h>
 #ifdef SST_HAVE_CRAY_DRC
 #include <rdmacred.h>
+
+#define DP_DRC_MAX_TRY 60
+#define DP_DRC_WAIT_USEC 1000000
+
 #endif /* SST_HAVE_CRAY_DRC */
 #endif /* SST_HAVE_FI_GNI */
 
@@ -30,7 +45,7 @@
 
 #define DP_AV_DEF_SIZE 512
 
-pthread_mutex_t fabric_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t fabric_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t wsr_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t ts_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -121,7 +136,9 @@ static void init_fabric(struct fabric_state *fabric, struct _SstParams *Params)
 
     fabric->info = NULL;
 
+    pthread_mutex_lock(&fabric_mutex);
     fi_getinfo(FI_VERSION(1, 5), NULL, NULL, 0, hints, &info);
+    pthread_mutex_unlock(&fabric_mutex);
     if (!info)
     {
         return;
@@ -383,6 +400,7 @@ static DP_WS_Stream RdmaInitWriter(CP_Services Svcs, void *CP_Stream,
     SMPI_Comm comm = Svcs->getMPIComm(CP_Stream);
     FabricState Fabric;
     int rc;
+    int try_left;
 
     memset(Stream, 0, sizeof(struct _Rdma_WS_Stream));
 
@@ -410,11 +428,19 @@ static DP_WS_Stream RdmaInitWriter(CP_Services Svcs, void *CP_Stream,
 
     SMPI_Bcast(&Fabric->credential, sizeof(Fabric->credential), SMPI_BYTE, 0,
                comm);
+
+    try_left = DP_DRC_MAX_TRY;
     rc = drc_access(Fabric->credential, 0, &Fabric->drc_info);
+    while (rc != DRC_SUCCESS && try_left--)
+    {
+        usleep(DP_DRC_WAIT_USEC);
+        rc = drc_access(Fabric->credential, 0, &Fabric->drc_info);
+    }
     if (rc != DRC_SUCCESS)
     {
         Svcs->verbose(CP_Stream,
-                      "Could not access DRC credential. Failed with %d.\n", rc);
+                      "Could not access DRC credential. Last failed with %d.\n",
+                      rc);
         goto err_out;
     }
 
@@ -520,6 +546,7 @@ static void RdmaProvideWriterDataToReader(CP_Services Svcs,
     RdmaWriterContactInfo *providedWriterInfo =
         (RdmaWriterContactInfo *)providedWriterInfo_v;
     void *CP_Stream = RS_Stream->CP_Stream;
+    int try_left;
     int rc;
 
     RS_Stream->PeerCohort = PeerCohort;
@@ -542,11 +569,22 @@ static void RdmaProvideWriterDataToReader(CP_Services Svcs,
                       rc);
     }
 
+    // at large scale the servers backing drc can become overwhelmed and
+    // timeout. The return value is -22 (EINVAL). a work around is to wait
+    // and try again.
+
+    try_left = DP_DRC_MAX_TRY;
     rc = drc_access(Fabric->credential, 0, &Fabric->drc_info);
+    while (rc != DRC_SUCCESS && try_left--)
+    {
+        usleep(DP_DRC_WAIT_USEC);
+        rc = drc_access(Fabric->credential, 0, &Fabric->drc_info);
+    }
     if (rc != DRC_SUCCESS)
     {
         Svcs->verbose(CP_Stream,
-                      "Could not access DRC credential. Failed with %d.\n", rc);
+                      "Could not access DRC credential. Last failed with %d.\n",
+                      rc);
     }
 
     Fabric->auth_key = malloc(sizeof(*Fabric->auth_key));
@@ -843,7 +881,7 @@ static FMStructDescRec RdmaReaderContactStructs[] = {
 static void RdmaDestroyWriter(CP_Services Svcs, DP_WS_Stream WS_Stream_v)
 {
     Rdma_WS_Stream WS_Stream = (Rdma_WS_Stream)WS_Stream_v;
-    TimestepList List;
+    long Timestep;
 #ifdef SST_HAVE_CRAY_DRC
     uint32_t Credential;
 
@@ -868,8 +906,10 @@ static void RdmaDestroyWriter(CP_Services Svcs, DP_WS_Stream WS_Stream_v)
     pthread_mutex_lock(&ts_mutex);
     while (WS_Stream->Timesteps)
     {
-        List = WS_Stream->Timesteps;
-        RdmaReleaseTimestep(Svcs, WS_Stream, List->Timestep);
+        Timestep = WS_Stream->Timesteps->Timestep;
+        pthread_mutex_unlock(&ts_mutex);
+        RdmaReleaseTimestep(Svcs, WS_Stream, Timestep);
+        pthread_mutex_lock(&ts_mutex);
     }
     pthread_mutex_unlock(&ts_mutex);
 
@@ -904,7 +944,9 @@ static FMStructDescRec RdmaTimestepInfoStructs[] = {
      sizeof(struct _RdmaPerTimestepInfo), NULL},
     {NULL, NULL, 0, NULL}};
 
-static struct _CP_DP_Interface RdmaDPInterface;
+static struct _CP_DP_Interface RdmaDPInterface = {
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
 
 /* In RdmaGetPriority, the Rdma DP should do whatever is necessary to test to
  * see if it
@@ -923,10 +965,8 @@ static int RdmaGetPriority(CP_Services Svcs, void *CP_Stream,
 {
     struct fi_info *hints, *info, *originfo, *useinfo;
     char *ifname;
+    char *forkunsafe;
     int Ret = -1;
-
-    (void)attr_atom_from_string(
-        "RDMA_DRC_KEY"); // make sure this attribute is translatable
 
     hints = fi_allocinfo();
     hints->caps = FI_MSG | FI_SEND | FI_RECV | FI_REMOTE_READ |
@@ -947,7 +987,15 @@ static int RdmaGetPriority(CP_Services Svcs, void *CP_Stream,
         ifname = getenv("FABRIC_IFACE");
     }
 
+    forkunsafe = getenv("FI_FORK_UNSAFE");
+    if (!forkunsafe)
+    {
+        putenv("FI_FORK_UNSAFE=Yes");
+    }
+
+    pthread_mutex_lock(&fabric_mutex);
     fi_getinfo(FI_VERSION(1, 5), NULL, NULL, 0, hints, &info);
+    pthread_mutex_unlock(&fabric_mutex);
     fi_freeinfo(hints);
 
     if (!info)
@@ -1013,9 +1061,8 @@ static void RdmaUnGetPriority(CP_Services Svcs, void *CP_Stream)
     Svcs->verbose(CP_Stream, "RDMA Dataplane unloading\n");
 }
 
-extern CP_DP_Interface LoadRdmaDP()
+extern NO_SANITIZE_THREAD CP_DP_Interface LoadRdmaDP()
 {
-    memset(&RdmaDPInterface, 0, sizeof(RdmaDPInterface));
     RdmaDPInterface.ReaderContactFormats = RdmaReaderContactStructs;
     RdmaDPInterface.WriterContactFormats = RdmaWriterContactStructs;
     RdmaDPInterface.TimestepInfoFormats = RdmaTimestepInfoStructs;
@@ -1028,8 +1075,12 @@ extern CP_DP_Interface LoadRdmaDP()
     RdmaDPInterface.notifyConnFailure = RdmaNotifyConnFailure;
     RdmaDPInterface.provideTimestep = RdmaProvideTimestep;
     RdmaDPInterface.readerRegisterTimestep = NULL;
+    RdmaDPInterface.timestepArrived = NULL;
     RdmaDPInterface.releaseTimestep = RdmaReleaseTimestep;
     RdmaDPInterface.readerReleaseTimestep = NULL;
+    RdmaDPInterface.RSReleaseTimestep = NULL;
+    RdmaDPInterface.WSRreadPatternLocked = NULL;
+    RdmaDPInterface.RSreadPatternLocked = NULL;
     RdmaDPInterface.destroyReader = RdmaDestroyReader;
     RdmaDPInterface.destroyWriter = RdmaDestroyWriter;
     RdmaDPInterface.destroyWriterPerReader = RdmaDestroyWriterPerReader;

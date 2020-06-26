@@ -30,7 +30,7 @@ class FilePOSIX : public Transport
 {
 
 public:
-    FilePOSIX(helper::Comm const &comm, const bool debugMode);
+    FilePOSIX(helper::Comm const &comm);
 
     ~FilePOSIX();
 
@@ -47,6 +47,8 @@ public:
     void Flush() final;
 
     void Close() final;
+
+    void Delete() final;
 
     void SeekToEnd() final;
 

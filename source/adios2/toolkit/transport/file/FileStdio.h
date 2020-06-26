@@ -30,7 +30,7 @@ class FileStdio : public Transport
 {
 
 public:
-    FileStdio(helper::Comm const &comm, const bool debugMode);
+    FileStdio(helper::Comm const &comm);
 
     ~FileStdio();
 
@@ -49,6 +49,8 @@ public:
 
     void Close() final;
 
+    void Delete() final;
+
     void SeekToEnd() final;
 
     void SeekToBegin() final;
@@ -58,6 +60,11 @@ private:
     FILE *m_File = nullptr;
     bool m_IsOpening = false;
     std::future<FILE *> m_OpenFuture;
+
+    /** Buffer settings need to be delayed until after opening */
+    bool m_DelayedBufferSet = false;
+    char *m_DelayedBuffer = nullptr;
+    size_t m_DelayedBufferSize = 0;
 
     /**
      * Check for std::ferror and throw an exception if true
